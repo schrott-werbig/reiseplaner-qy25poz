@@ -1028,16 +1028,17 @@ function getLogAsText() {
 
 /* ============================================================
    PROXY HELPER
-   Routes external HTTPS requests via the local Python server
-   to avoid CORS problems when opened from http://localhost.
+   - Auf localhost (lokaler Python-Server): nutze /proxy?url=…
+     weil der Browser sonst direkte HTTPS-Requests von http:// blockiert.
+   - Auf GitHub Pages oder anderem HTTPS-Hosting: rufe APIs direkt auf,
+     da Nominatim und OSRM CORS-Header für HTTPS-Quellen senden.
    ============================================================ */
 function viaProxy(url) {
-  const proto = window.location.protocol;
-  if (proto === 'http:' || proto === 'https:') {
-    // We're running via server → use proxy
+  const host = window.location.hostname;
+  const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '';
+  if (isLocal && window.location.protocol === 'http:') {
     return window.location.origin + '/proxy?url=' + encodeURIComponent(url);
   }
-  // file:// → return as-is (may fail due to CORS)
   return url;
 }
 
