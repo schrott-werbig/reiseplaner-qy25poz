@@ -1,0 +1,2420 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+<title>Reiseplaner</title>
+
+<!-- PWA: Manifest und Theme -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2d6a4f">
+<meta name="application-name" content="Reiseplaner">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Reiseplaner">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" onerror="window._leafletCssFailed=true">
+<style>
+/* ============================================================
+   DESIGN TOKENS
+   ============================================================ */
+:root {
+  --green-dark:   #2d6a4f;
+  --green-mid:    #52b788;
+  --green-light:  #d8f3dc;
+  --surface:      #ffffff;
+  --surface-alt:  #f0ede6;
+  --bg:           #f4f1eb;
+  --text:         #1b2b1e;
+  --text-soft:    #4a6357;
+  --text-faint:   #8aab97;
+  --border:       #cfe3d4;
+  --red:          #c0392b;
+  --gold:         #8a6800;
+  --blue:         #1a6b8a;
+  --purple:       #5a3590;
+  --shadow:       0 2px 10px rgba(0,0,0,.12);
+  --radius:       9px;
+}
+
+/* ============================================================
+   RESET & BASE
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Segoe UI', Arial, sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+  min-height: 100vh;
+  overflow: hidden;
+}
+input, select, button { font-family: inherit; font-size: inherit; }
+button { cursor: pointer; }
+
+/* ============================================================
+   LAYOUT
+   ============================================================ */
+header {
+  height: 48px;
+  background: var(--green-dark);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px;
+  box-shadow: var(--shadow);
+  flex-shrink: 0;
+}
+header h1 { font-size: 1.15rem; font-weight: 500; }
+
+#app { display: flex; height: calc(100vh - 48px); }
+
+#sidebar {
+  width: 340px;
+  min-width: 260px;
+  max-width: 480px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.panel { padding: 12px; border-bottom: 1px solid var(--border); }
+.panel-title {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.8px;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+}
+
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+#map {
+  flex: none;
+  background: #e8f2e8;
+}
+#map-offline-notice {
+  display: none;
+  padding: 20px;
+  text-align: center;
+  color: var(--text-soft);
+  font-size: 0.85rem;
+  background: #fff3cd;
+  border: 1px solid #e0c96a;
+  border-radius: 8px;
+  margin: 10px;
+}
+#divider {
+  height: 9px;
+  background: var(--surface-alt);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  cursor: row-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  user-select: none;
+  transition: background 0.1s;
+}
+#divider:hover, #divider.active {
+  background: var(--green-light);
+  border-color: var(--green-mid);
+}
+#divider span {
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  letter-spacing: 3px;
+  pointer-events: none;
+}
+#table-pane {
+  flex: none;
+  overflow-y: auto;
+  background: var(--surface);
+}
+#statusbar {
+  flex-shrink: 0;
+  min-height: 24px;
+  line-height: 1.8;
+  padding: 2px 12px;
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  background: var(--surface-alt);
+  border-top: 1px solid var(--border);
+}
+#statusbar.error { color: var(--red); background: #fdecea; }
+#statusbar.success { color: var(--green-dark); }
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border-radius: var(--radius);
+  border: 1.5px solid var(--green-dark);
+  background: none;
+  color: var(--green-dark);
+  font-size: 0.78rem;
+  transition: background 0.12s, color 0.12s;
+}
+.btn:hover, .btn.solid  { background: var(--green-dark); color: #fff; }
+.btn.solid:hover        { background: #1b4d37; }
+.btn.small              { padding: 3px 8px; font-size: 0.7rem; }
+.btn.ghost              { border-color: var(--border); color: var(--text-soft); }
+.btn.ghost:hover        { background: var(--surface-alt); color: var(--text); }
+.btn.blue               { border-color: var(--blue); color: var(--blue); }
+.btn.blue:hover         { background: var(--blue); color: #fff; }
+.btn.purple             { border-color: var(--purple); color: var(--purple); }
+.btn.purple:hover       { background: var(--purple); color: #fff; }
+.btn.green-outline      { border-color: #2a7a2a; color: #2a7a2a; }
+.btn.green-outline:hover{ background: #2a7a2a; color: #fff; }
+
+/* ============================================================
+   TRIP LIST
+   ============================================================ */
+.trip-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.trip-item {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.trip-item:hover  { background: var(--surface-alt); }
+.trip-item.active { border-color: var(--green-mid); background: #eaf7ef; }
+.trip-item .name  { flex: 1; font-size: 0.86rem; pointer-events: none; }
+.trip-item .emoji { pointer-events: none; }
+.trip-item .del-btn {
+  color: var(--text-faint);
+  font-size: 0.8rem;
+  padding: 2px 6px;
+  border: none; background: none;
+  border-radius: 4px;
+}
+.trip-item .del-btn:hover { color: var(--red); background: #fdecea; }
+
+/* ============================================================
+   DAY BLOCKS + DRAG & DROP
+   ============================================================ */
+#days-list { display: flex; flex-direction: column; gap: 6px; }
+
+.day-block {
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: opacity 0.15s;
+  background: #fff;
+}
+.day-block.drop-above    { border-top: 3px solid var(--green-dark); }
+.day-block.drop-below    { border-bottom: 3px solid var(--green-dark); }
+.day-block.dragging      { opacity: 0.35; }
+
+.day-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px;
+  background: var(--surface-alt);
+  user-select: none;
+}
+.day-color-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.day-name-input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-size: 0.8rem;
+  font-weight: 600;
+  outline: none;
+  color: var(--text);
+  min-width: 0;
+  cursor: text;
+}
+.day-drag-handle {
+  color: var(--text-faint);
+  font-size: 0.95rem;
+  cursor: grab;
+  padding: 2px 4px;
+  user-select: none;
+  flex-shrink: 0;
+}
+.day-drag-handle:active { cursor: grabbing; }
+.day-collapse-btn, .day-delete-btn {
+  color: var(--text-faint);
+  font-size: 0.72rem;
+  border: none; background: none;
+  padding: 2px 5px; border-radius: 4px;
+}
+.day-delete-btn:hover { color: var(--red); background: #fdecea; }
+
+.day-body { padding: 7px 8px; }
+.day-body.collapsed { display: none; }
+
+.places-list { display: flex; flex-direction: column; gap: 2px; }
+.place-block { margin-bottom: 1px; }
+.place-block.drop-above-place { border-top: 3px solid var(--green-dark); }
+.place-block.drop-below-place { border-bottom: 3px solid var(--green-dark); }
+.place-block.dragging         { opacity: 0.35; }
+
+.place-row {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 0;
+}
+.place-drag-handle {
+  color: var(--text-faint);
+  font-size: 0.82rem;
+  cursor: grab;
+  padding: 2px 3px;
+  flex-shrink: 0;
+  user-select: none;
+}
+.place-drag-handle:active { cursor: grabbing; }
+.place-num {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.place-input {
+  flex: 1;
+  padding: 4px 7px;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  background: #fff;
+  outline: none;
+}
+.place-input:focus { border-color: var(--green-mid); }
+.place-delete-btn {
+  color: var(--text-faint);
+  font-size: 0.77rem;
+  border: none; background: none;
+  padding: 2px 4px; border-radius: 3px;
+  flex-shrink: 0;
+}
+.place-delete-btn:hover { color: var(--red); background: #fdecea; }
+
+.segment-transport {
+  display: flex; align-items: center; gap: 3px;
+  padding: 2px 0 3px 33px;
+  flex-wrap: wrap;
+}
+.seg-label {
+  font-size: 0.6rem;
+  color: var(--text-faint);
+  margin-right: 2px;
+  white-space: nowrap;
+}
+.seg-mode-btn {
+  padding: 2px 5px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: none;
+  font-size: 0.64rem;
+  color: var(--text-soft);
+  transition: all 0.1s;
+  white-space: nowrap;
+}
+.seg-mode-btn:hover { border-color: var(--green-mid); }
+.seg-mode-btn.selected { border-color: var(--green-dark); background: var(--green-dark); color: #fff; }
+
+/* Hotel / Expense toggle sections */
+.section-toggle {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 6px;
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 600;
+  user-select: none;
+}
+.section-toggle.hotel-toggle { color: var(--gold); }
+.section-toggle.exp-toggle   { color: var(--blue); }
+.section-toggle .arrow {
+  font-size: 0.62rem;
+  color: var(--text-faint);
+  margin-left: auto;
+}
+
+.hotel-body, .exp-body {
+  display: none;
+  border-radius: 7px;
+  padding: 6px 8px;
+  margin-top: 3px;
+}
+.hotel-body { background: #fffdf4; border: 1.5px solid #e0c96a; }
+.exp-body   { background: #f4f8ff; border: 1.5px solid #aac4e0; }
+.hotel-body.open, .exp-body.open { display: block; }
+
+.form-row { display: flex; align-items: center; gap: 5px; margin-bottom: 4px; }
+.form-row:last-child { margin-bottom: 0; }
+.form-label { font-size: 0.64rem; color: var(--text-soft); width: 52px; flex-shrink: 0; }
+.form-input {
+  flex: 1;
+  padding: 3px 6px;
+  border-radius: 5px;
+  font-size: 0.77rem;
+  background: #fff;
+  outline: none;
+}
+.hotel-body .form-input { border: 1px solid #e0c96a; }
+.exp-body   .form-input { border: 1px solid #aac4e0; }
+.form-input:focus { border-color: var(--green-mid); }
+.form-input.narrow { width: 58px; flex: none; text-align: right; }
+.form-currency { font-size: 0.68rem; color: var(--text-soft); flex-shrink: 0; }
+
+.expense-row { display: flex; align-items: center; gap: 3px; margin-bottom: 3px; }
+.expense-row:last-child { margin-bottom: 0; }
+.exp-cat-select {
+  padding: 2px 4px;
+  border: 1px solid #aac4e0;
+  border-radius: 5px;
+  font-size: 0.68rem;
+  background: #fff;
+  outline: none;
+  flex-shrink: 0;
+}
+.exp-desc-input {
+  flex: 1;
+  padding: 2px 5px;
+  border: 1px solid #aac4e0;
+  border-radius: 5px;
+  font-size: 0.71rem;
+  background: #fff; outline: none;
+}
+.exp-amt-input {
+  width: 58px;
+  padding: 2px 5px;
+  border: 1px solid #aac4e0;
+  border-radius: 5px;
+  font-size: 0.71rem;
+  background: #fff; outline: none;
+  text-align: right;
+}
+.exp-delete-btn {
+  color: #aac4e0; font-size: 0.75rem;
+  border: none; background: none;
+  padding: 1px 3px; border-radius: 3px;
+}
+.exp-delete-btn:hover { color: var(--red); }
+.exp-empty { font-size: 0.68rem; color: #8899bb; padding: 2px 0; }
+
+/* ============================================================
+   MAP LEGEND
+   ============================================================ */
+#map-legend {
+  position: absolute;
+  top: 10px; right: 10px;
+  z-index: 500;
+  background: rgba(255,255,255,0.95);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 0.68rem;
+  box-shadow: var(--shadow);
+  max-width: 200px;
+  display: none;
+  border: 1px solid rgba(0,0,0,0.07);
+}
+#map-legend .legend-title { font-weight: 700; font-size: 0.69rem; margin-bottom: 4px; }
+.legend-row { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
+.legend-line { width: 18px; height: 3px; border-radius: 2px; flex-shrink: 0; }
+
+/* ============================================================
+   TABLE
+   ============================================================ */
+.table-section-label {
+  padding: 7px 10px 3px;
+  font-size: 0.63rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-faint);
+  background: var(--surface);
+}
+.table-header-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px;
+  background: var(--surface-alt);
+  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.table-header-bar h3 { flex: 1; font-size: 0.84rem; font-weight: 500; }
+#budget-badge { font-size: 0.77rem; font-weight: 600; color: var(--gold); }
+
+.data-table { width: 100%; border-collapse: collapse; font-size: 0.79rem; }
+.data-table th {
+  text-align: left;
+  padding: 4px 9px;
+  background: var(--surface-alt);
+  color: var(--text-soft);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.9px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.data-table td {
+  padding: 4px 9px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.data-table tbody tr:hover td { background: #f3fbf6; }
+.data-table tr:last-child td { border-bottom: none; }
+
+.row-day-header td {
+  background: #edf7f1;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--green-dark);
+  padding: 3px 9px;
+}
+.row-hotel td       { background: #fffdf0; font-size: 0.75rem; }
+.row-expense td     { background: #f4f8ff; font-size: 0.74rem; }
+.row-subtotal td    { background: #e4f2ea; font-weight: 700; color: var(--green-dark); }
+.row-grand-total td { background: #fff8e0; font-weight: 700; color: var(--gold); font-size: 0.82rem; }
+
+.col-green  { font-weight: 600; color: var(--green-dark); }
+.col-blue   { font-weight: 600; color: var(--blue); }
+.col-faint  { color: var(--text-faint); font-size: 0.7rem; }
+.col-gold   { font-weight: 600; color: var(--gold); }
+.col-red    { font-weight: 600; color: #b03010; }
+.col-dot    { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+
+.price-input {
+  width: 76px;
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  text-align: right;
+  outline: none;
+  background: #fff;
+}
+.price-input:focus { border-color: var(--green-mid); }
+
+.empty-state { padding: 30px; text-align: center; color: var(--text-faint); font-size: 0.82rem; }
+.budget-divider td { border-top: 2px solid var(--border); padding: 0 !important; }
+
+/* ============================================================
+   MODALS
+   ============================================================ */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 9000;
+  align-items: center;
+  justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+.modal-box {
+  background: #fff;
+  border-radius: 13px;
+  padding: 22px 22px 18px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.22);
+  min-width: 300px;
+  max-width: 95vw;
+}
+.modal-box h3 { margin-bottom: 14px; font-size: 0.95rem; font-weight: 600; }
+.modal-label {
+  font-size: 0.72rem;
+  color: var(--text-soft);
+  display: block;
+  margin-bottom: 3px;
+}
+.modal-input {
+  width: 100%;
+  padding: 6px 9px;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.86rem;
+  margin-bottom: 12px;
+  outline: none;
+  font-family: inherit;
+}
+.modal-input:focus { border-color: var(--green-mid); }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+
+.emoji-picker { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 12px; }
+.emoji-btn {
+  font-size: 1.15rem;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1.5px solid var(--border);
+  background: none;
+}
+.emoji-btn.selected { background: #d4ede1; border-color: var(--green-mid); }
+
+.print-steps {
+  font-size: 0.77rem;
+  color: var(--text-soft);
+  padding-left: 16px;
+  margin-bottom: 14px;
+  line-height: 1.8;
+}
+.day-print-list {
+  display: flex; flex-direction: column; gap: 5px;
+  margin-bottom: 14px; max-height: 240px; overflow-y: auto;
+}
+.day-print-btn {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 7px;
+  border: 1.5px solid var(--border); background: none;
+  font-size: 0.82rem; font-family: inherit; color: var(--text);
+}
+.day-print-btn:hover { background: #f0faf4; border-color: var(--green-mid); }
+.day-print-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+/* ============================================================
+   PRINT
+   ============================================================ */
+@media print {
+  body * { visibility: hidden; }
+  #print-target, #print-target * { visibility: visible; }
+  #print-target {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    z-index: 99999 !important;
+    background: #fff !important;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <span>🗺️</span>
+  <h1>Reiseplaner</h1>
+</header>
+
+<div id="app">
+
+  <!-- ═══════════════════════════════ SIDEBAR ═══════════════════════════════ -->
+  <aside id="sidebar">
+
+    <div class="panel">
+      <div class="panel-title">Meine Reisen</div>
+      <div class="trip-list" id="trip-list">
+        <div style="font-size:0.77rem;color:var(--text-faint)">Noch keine Reisen.</div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:4px">
+        <button class="btn solid" id="btn-new-trip" style="flex:1">+ Neue Reise</button>
+        <button class="btn green-outline" id="btn-import" title="Reise aus Datei laden">📂 Import</button>
+        <input type="file" id="file-import-input" accept=".json" style="display:none">
+      </div>
+    </div>
+
+    <div class="panel" id="panel-days" style="display:none">
+      <div class="panel-title">Reisetage &amp; Orte</div>
+      <div id="days-list"></div>
+      <div style="display:flex;gap:5px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn small ghost" id="btn-add-day">+ 1 Tag</button>
+        <button class="btn small ghost" id="btn-add-week">+ 7 Tage</button>
+        <button class="btn small ghost" id="btn-add-n-days">+ N Tage…</button>
+        <button class="btn small solid" id="btn-calculate" style="margin-left:auto">▶ Berechnen</button>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-export" style="display:none">
+      <div class="panel-title">Exportieren</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <button class="btn blue" id="btn-print-all">🗺️ Gesamtkarte drucken</button>
+        <button class="btn blue" id="btn-print-day">📅 Tageskarte drucken</button>
+        <button class="btn blue" id="btn-export-route-img">📋 Route als Bild</button>
+        <button class="btn blue" id="btn-export-budget-img">💰 Budget als Bild</button>
+        <button class="btn green-outline" id="btn-export-json">💾 Reise exportieren</button>
+        <button class="btn purple" id="btn-export-zip">⬇️ Alle Dateien als ZIP</button>
+      </div>
+      <div style="margin-top:6px;font-size:0.67rem;color:var(--text-faint);line-height:1.5">
+        Karte drucken: Im Druckdialog «Als PDF» wählen, Querformat, Ränder «Keine».
+      </div>
+    </div>
+  </aside>
+
+  <!-- ═══════════════════════════════ MAIN ═══════════════════════════════ -->
+  <main id="main">
+    <div id="map"></div>
+    <div id="map-legend"></div>
+    <div id="divider"><span>⠿</span></div>
+    <div id="table-pane">
+      <div class="table-header-bar">
+        <h3 id="table-title">Routenübersicht</h3>
+        <span id="budget-badge"></span>
+      </div>
+      <div id="table-content">
+        <div class="empty-state">Wähle eine Reise und klicke «Berechnen».</div>
+      </div>
+    </div>
+    <div id="statusbar">
+      <span id="status-text">Bereit</span>
+      <button id="btn-show-log" style="float:right;background:none;border:none;color:var(--text-faint);font-size:0.7rem;cursor:pointer;text-decoration:underline;padding:0">📋 Log anzeigen</button>
+    </div>
+  </main>
+</div>
+
+<!-- ═══════════════════════════════ LOG OVERLAY ═══════════════════════════════ -->
+<div class="modal-overlay" id="modal-log">
+  <div class="modal-box" style="width:700px;max-height:85vh;display:flex;flex-direction:column">
+    <h3 style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+      📋 Fehler-Log
+      <span style="font-size:0.72rem;color:var(--text-faint);font-weight:normal;flex:1">
+        Zeigt alle Schritte und Fehler der letzten Berechnung
+      </span>
+    </h3>
+    <div id="log-content" style="flex:1;overflow-y:auto;background:#1e1e1e;color:#e0e0e0;padding:10px 12px;border-radius:6px;font-family:'Courier New',monospace;font-size:0.75rem;line-height:1.5;min-height:200px;white-space:pre-wrap;word-break:break-word">
+      <span style="color:#888">Noch keine Einträge. Berechne eine Route, um Logs zu sehen.</span>
+    </div>
+    <div class="modal-actions" style="flex-shrink:0;margin-top:12px">
+      <button class="btn ghost" id="btn-copy-log">📋 In Zwischenablage kopieren</button>
+      <button class="btn ghost" id="btn-clear-log">🗑️ Löschen</button>
+      <button class="btn solid" id="btn-close-log">Schliessen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ MODALS ═══════════════════════════════ -->
+
+<div class="modal-overlay" id="modal-new-trip">
+  <div class="modal-box" style="width:320px">
+    <h3>Neue Reise erstellen</h3>
+    <label class="modal-label">Name</label>
+    <input class="modal-input" id="input-trip-name" placeholder="z.B. Europatour 2025" autocomplete="off">
+    <label class="modal-label">Währung</label>
+    <input class="modal-input" id="input-currency" placeholder="CHF" maxlength="5" autocomplete="off">
+    <label class="modal-label">Symbol</label>
+    <div class="emoji-picker" id="emoji-picker">
+      <button class="emoji-btn selected" data-emoji="🌍">🌍</button>
+      <button class="emoji-btn" data-emoji="🏔️">🏔️</button>
+      <button class="emoji-btn" data-emoji="🏖️">🏖️</button>
+      <button class="emoji-btn" data-emoji="🚗">🚗</button>
+      <button class="emoji-btn" data-emoji="✈️">✈️</button>
+      <button class="emoji-btn" data-emoji="🚂">🚂</button>
+      <button class="emoji-btn" data-emoji="⛵">⛵</button>
+      <button class="emoji-btn" data-emoji="🎒">🎒</button>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="btn-cancel-new-trip">Abbrechen</button>
+      <button class="btn solid" id="btn-confirm-new-trip">Erstellen</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-add-days">
+  <div class="modal-box" style="width:280px">
+    <h3>Tage hinzufügen</h3>
+    <label class="modal-label">Anzahl Tage</label>
+    <input class="modal-input" id="input-n-days" type="number" min="1" max="90" value="3" autocomplete="off">
+    <div class="modal-actions">
+      <button class="btn ghost" id="btn-cancel-add-days">Abbrechen</button>
+      <button class="btn solid" id="btn-confirm-add-days">Hinzufügen</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-print-all">
+  <div class="modal-box" style="width:360px">
+    <h3>🗺️ Karte speichern</h3>
+    <p style="font-size:0.78rem;color:var(--text-soft);margin-bottom:10px">
+      So speicherst du die Karte für dein Fotoalbum:
+    </p>
+    <ol class="print-steps">
+      <li>Klicke auf <strong>«Drucken»</strong></li>
+      <li>Drucker: <strong>«Als PDF speichern»</strong></li>
+      <li>Orientierung: <strong>Querformat</strong>, Ränder: <strong>Keine</strong></li>
+      <li>Auf <strong>«Speichern»</strong> klicken</li>
+    </ol>
+    <div class="modal-actions">
+      <button class="btn ghost" id="btn-cancel-print-all">Abbrechen</button>
+      <button class="btn solid" id="btn-confirm-print-all">Drucken</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-print-day">
+  <div class="modal-box" style="width:320px">
+    <h3>📅 Welchen Tag drucken?</h3>
+    <div class="day-print-list" id="day-print-list"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="btn-cancel-print-day">Abbrechen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ EXTERNAL LIBS ═══════════════════════════════ -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        onerror="window._leafletJsFailed=true"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"
+        onerror="window._html2canvasFailed=true"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
+        onerror="window._jszipFailed=true"></script>
+
+<!-- ═══════════════════════════════ APP LOGIC ═══════════════════════════════ -->
+<script>
+'use strict';
+
+/* ============================================================
+   HELPER: safe element access (avoids crashes if DOM not ready)
+   ============================================================ */
+function $(id) { return document.getElementById(id); }
+
+/* ============================================================
+   CONSTANTS
+   ============================================================ */
+const MODES = [
+  { id: 'driving',         label: '🚗 Auto', osrm: 'car',  directSpeed: null, dash: null,   lineWidth: 4.5 },
+  { id: 'foot-walking',    label: '🚶 Fuss', osrm: 'foot', directSpeed: null, dash: '6 5',  lineWidth: 3   },
+  { id: 'cycling-regular', label: '🚲 Velo', osrm: 'bike', directSpeed: null, dash: null,   lineWidth: 3.5 },
+  { id: 'driving-hgv',     label: '🚌 ÖV',   osrm: 'car',  directSpeed: null, dash: '10 4', lineWidth: 4   },
+  { id: 'fly',             label: '✈️ Flug',  osrm: null,   directSpeed: 850,  dash: '4 8',  lineWidth: 2.5 },
+  { id: 'train',           label: '🚂 Zug',   osrm: null,   directSpeed: 120,  dash: '12 5', lineWidth: 3.5 },
+];
+
+const DAY_COLORS = [
+  '#e63946','#2a9d8f','#7b3f9e','#f4a261',
+  '#457b9d','#2d6a4f','#e76f51','#264653',
+  '#a8dadc','#c05621','#6a994e','#bc6c25',
+];
+
+const EXP_CATS = [
+  { id: 'fuel',   label: '⛽ Tanken'    },
+  { id: 'toll',   label: '🛣️ Maut'      },
+  { id: 'food',   label: '🍽️ Essen'     },
+  { id: 'shop',   label: '🛒 Einkauf'   },
+  { id: 'ticket', label: '🎟️ Eintritt'  },
+  { id: 'park',   label: '🅿️ Parkplatz' },
+  { id: 'other',  label: '📌 Sonstiges' },
+];
+
+const STORAGE_KEY = 'reiseplaner_v2';
+
+/* ============================================================
+   STATE
+   ============================================================ */
+let trips = [];
+let activeTrip = null;
+let computedDays = [];
+let selectedEmoji = '🌍';
+let mapReady = false;
+let map = null;
+let routeLayer = null;
+
+/* ============================================================
+   LIBRARY CHECKS
+   ============================================================ */
+function checkLeaflet() { return typeof L !== 'undefined' && !window._leafletJsFailed; }
+function checkHtml2Canvas() { return typeof html2canvas !== 'undefined' && !window._html2canvasFailed; }
+function checkJSZip() { return typeof JSZip !== 'undefined' && !window._jszipFailed; }
+
+/* ============================================================
+   PERSISTENCE
+   ============================================================ */
+function loadFromStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) trips = parsed;
+    }
+  } catch (e) {
+    console.warn('Could not load from storage:', e);
+    trips = [];
+  }
+}
+
+function saveToStorage() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(trips));
+  } catch (e) {
+    console.warn('Could not save:', e);
+  }
+}
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+function getMode(id) { return MODES.find(m => m.id === id) || MODES[0]; }
+function getCurrency() { return activeTrip && activeTrip.currency ? activeTrip.currency : 'CHF'; }
+function getCatLabel(id) {
+  const c = EXP_CATS.find(e => e.id === id);
+  return c ? c.label : '📌';
+}
+
+function createDay(label) {
+  return {
+    label: label || 'Tag 1',
+    collapsed: false,
+    places: [
+      { name: '', transport: 'driving' },
+      { name: '', transport: 'driving' },
+    ],
+    hotel: { open: false, name: '', pricePerNight: '', nights: '1' },
+    expenses: [],
+    expensesOpen: false,
+  };
+}
+
+function createTrip(name, currency, emoji) {
+  return {
+    id: Date.now(),
+    name: name,
+    currency: currency || 'CHF',
+    emoji: emoji || '🌍',
+    days: [createDay('Tag 1')],
+    segPrices: {},
+  };
+}
+
+function getSegPrice(dayIdx, segIdx) {
+  if (!activeTrip || !activeTrip.segPrices) return '';
+  return activeTrip.segPrices[dayIdx + '_' + segIdx] || '';
+}
+function setSegPrice(dayIdx, segIdx, value) {
+  if (!activeTrip) return;
+  if (!activeTrip.segPrices) activeTrip.segPrices = {};
+  activeTrip.segPrices[dayIdx + '_' + segIdx] = value;
+  saveToStorage();
+}
+
+function calcTransportTotal() {
+  if (!activeTrip || !activeTrip.segPrices) return 0;
+  let sum = 0;
+  for (const v of Object.values(activeTrip.segPrices)) {
+    const n = parseFloat(v);
+    if (!isNaN(n)) sum += n;
+  }
+  return sum;
+}
+
+function calcHotelTotal() {
+  if (!activeTrip) return 0;
+  let sum = 0;
+  for (const day of activeTrip.days) {
+    const h = day.hotel || {};
+    const p = parseFloat(h.pricePerNight);
+    const n = parseFloat(h.nights);
+    if (!isNaN(p) && !isNaN(n)) sum += p * n;
+  }
+  return sum;
+}
+
+function calcExpensesTotal() {
+  if (!activeTrip) return 0;
+  let sum = 0;
+  for (const day of activeTrip.days) {
+    for (const e of (day.expenses || [])) {
+      const n = parseFloat(e.amount);
+      if (!isNaN(n)) sum += n;
+    }
+  }
+  return sum;
+}
+
+function calcGrandTotal() {
+  return calcTransportTotal() + calcHotelTotal() + calcExpensesTotal();
+}
+
+function formatDist(km) {
+  if (km < 1)  return Math.round(km * 1000) + ' m';
+  if (km < 10) return km.toFixed(1) + ' km';
+  return Math.round(km) + ' km';
+}
+function formatTime(minutes) {
+  if (minutes < 60) return Math.round(minutes) + ' Min.';
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  return m > 0 ? h + 'h ' + m + 'min' : h + 'h';
+}
+function formatPrice(value) {
+  const n = parseFloat(value);
+  return isNaN(n) ? '' : n.toFixed(2);
+}
+function safeName(str) {
+  return (str || 'reise').replace(/[^a-zA-Z0-9äöüÄÖÜ_-]/g, '_');
+}
+function esc(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function setStatus(msg, type) {
+  const el = $('status-text');
+  const bar = $('statusbar');
+  if (!el || !bar) return;
+  el.textContent = msg;
+  bar.className = '';
+  if (type === 'error')   bar.classList.add('error');
+  if (type === 'success') bar.classList.add('success');
+}
+
+/* ============================================================
+   LOG SYSTEM
+   ============================================================ */
+const LOG_MAX_ENTRIES = 500;
+let logEntries = [];
+
+function addLog(message, type) {
+  const time = new Date().toLocaleTimeString('de-CH', { hour12: false });
+  logEntries.push({ time, message, type: type || 'info' });
+  if (logEntries.length > LOG_MAX_ENTRIES) {
+    logEntries = logEntries.slice(-LOG_MAX_ENTRIES);
+  }
+  // If the log modal is open, append live
+  const logEl = $('log-content');
+  if (logEl && $('modal-log').classList.contains('open')) {
+    renderLog();
+  }
+  // Also log to console for developers
+  if (type === 'error') console.error('[LOG]', message);
+  else if (type === 'warn') console.warn('[LOG]', message);
+  else console.log('[LOG]', message);
+}
+
+function clearLog() {
+  logEntries = [];
+}
+
+function renderLog() {
+  const logEl = $('log-content');
+  if (!logEl) return;
+  if (!logEntries.length) {
+    logEl.innerHTML = '<span style="color:#888">Noch keine Einträge.</span>';
+    return;
+  }
+  const colors = {
+    info:    '#e0e0e0',
+    success: '#7ddc7d',
+    warn:    '#ffc864',
+    error:   '#ff7878',
+  };
+  logEl.innerHTML = logEntries.map(e => {
+    const color = colors[e.type] || colors.info;
+    return '<div style="color:' + color + '"><span style="color:#888">[' + e.time + ']</span> ' + esc(e.message) + '</div>';
+  }).join('');
+  // Scroll to bottom
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function getLogAsText() {
+  return logEntries.map(e =>
+    '[' + e.time + '] [' + e.type.toUpperCase() + '] ' + e.message
+  ).join('\n');
+}
+
+/* ============================================================
+   PROXY HELPER
+   Routes external HTTPS requests via the local Python server
+   to avoid CORS problems when opened from http://localhost.
+   ============================================================ */
+function viaProxy(url) {
+  const proto = window.location.protocol;
+  if (proto === 'http:' || proto === 'https:') {
+    // We're running via server → use proxy
+    return window.location.origin + '/proxy?url=' + encodeURIComponent(url);
+  }
+  // file:// → return as-is (may fail due to CORS)
+  return url;
+}
+
+/* ============================================================
+   MAP
+   ============================================================ */
+function initMap() {
+  if (!checkLeaflet()) {
+    const mapEl = $('map');
+    if (mapEl) {
+      mapEl.innerHTML =
+        '<div id="map-offline-notice" style="display:block">' +
+        '⚠️ Kartenbibliothek konnte nicht geladen werden.<br>' +
+        'Die App funktioniert trotzdem, aber Karten können nicht angezeigt werden.<br>' +
+        'Prüfe deine Internetverbindung und lade die Seite neu.' +
+        '</div>';
+    }
+    mapReady = false;
+    return;
+  }
+  try {
+    map = L.map('map', { zoomControl: true }).setView([46.8, 8.3], 7);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap contributors © CARTO',
+      subdomains: 'abcd',
+      maxZoom: 20,
+    }).addTo(map);
+    routeLayer = L.layerGroup().addTo(map);
+    mapReady = true;
+  } catch (e) {
+    console.error('Map init failed:', e);
+    mapReady = false;
+  }
+}
+
+function clearMap() {
+  if (mapReady && routeLayer) routeLayer.clearLayers();
+  const leg = $('map-legend');
+  if (leg) { leg.style.display = 'none'; leg.innerHTML = ''; }
+}
+
+function renderMapLegend() {
+  if (!activeTrip) return;
+  const leg = $('map-legend');
+  if (!leg) return;
+  let html = '<div class="legend-title">' + esc(activeTrip.emoji + ' ' + activeTrip.name) + '</div>';
+  activeTrip.days.forEach((day, di) => {
+    const col = DAY_COLORS[di % DAY_COLORS.length];
+    html += '<div class="legend-row"><div class="legend-line" style="background:' + col + '"></div><span>' + esc(day.label) + '</span></div>';
+  });
+  leg.innerHTML = html;
+  leg.style.display = 'block';
+}
+
+/* ============================================================
+   NETWORK: GEOCODING & ROUTING
+   ============================================================ */
+async function geocode(query) {
+  if (!query || !query.trim()) return null;
+  const original = query.trim();
+
+  // Try variants: original, then cleaned versions
+  // This handles "Zürich HB" → "Zürich Hauptbahnhof", "Milano Centrale" → "Milano", etc.
+  const variants = [original];
+
+  // Variant: strip common station suffixes
+  const stripped = original
+    .replace(/\s+HB\b/gi, ' Hauptbahnhof')
+    .replace(/\s+Centrale\b/gi, '')
+    .replace(/\s+Hbf\b/gi, ' Hauptbahnhof')
+    .replace(/\s+Station\b/gi, '')
+    .replace(/\s+Bahnhof\b/gi, '')
+    .trim();
+  if (stripped !== original && stripped) variants.push(stripped);
+
+  // Variant: just the first word (city name only)
+  const firstWord = original.split(/[\s,]+/)[0];
+  if (firstWord && firstWord.length > 2 && firstWord !== original && !variants.includes(firstWord)) {
+    variants.push(firstWord);
+  }
+
+  for (const variant of variants) {
+    const url = 'https://nominatim.openstreetmap.org/search?' +
+      new URLSearchParams({
+        q: variant,
+        format: 'json',
+        limit: 1,
+        'accept-language': 'de'
+      });
+    try {
+      addLog('Geocode: "' + variant + '"');
+      const res = await fetch(viaProxy(url));
+      if (!res.ok) {
+        addLog('  HTTP ' + res.status + ' for "' + variant + '"', 'warn');
+        continue;
+      }
+      const data = await res.json();
+      if (Array.isArray(data) && data.length) {
+        addLog('  ✓ Found: ' + data[0].display_name.substring(0, 60), 'success');
+        return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), matched: variant };
+      } else {
+        addLog('  No result for "' + variant + '"', 'warn');
+      }
+    } catch (err) {
+      addLog('  Error: ' + err.message, 'error');
+    }
+  }
+  return null;
+}
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLa = (lat2 - lat1) * Math.PI / 180;
+  const dLo = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLa/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLo/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+async function fetchOSRM(from, to, profile) {
+  const url = 'https://router.project-osrm.org/route/v1/' + profile + '/' +
+    from.lon + ',' + from.lat + ';' + to.lon + ',' + to.lat +
+    '?overview=full&geometries=geojson';
+  try {
+    const res = await fetch(viaProxy(url));
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.routes && data.routes.length) {
+      return {
+        dist: data.routes[0].distance / 1000,
+        dur: data.routes[0].duration / 60,
+        pts: data.routes[0].geometry.coordinates,
+      };
+    }
+  } catch (err) {
+    console.error('OSRM error:', err);
+  }
+  return null;
+}
+
+async function calcSegment(from, to, mode) {
+  if (mode.directSpeed) {
+    const dist = haversine(from.lat, from.lon, to.lat, to.lon) * (mode.id === 'train' ? 1.25 : 1);
+    return { dist, dur: (dist / mode.directSpeed) * 60, pts: null };
+  }
+  const result = await fetchOSRM(from, to, mode.osrm);
+  if (result) return result;
+  const dist = haversine(from.lat, from.lon, to.lat, to.lon);
+  return { dist, dur: dist * 1.5, pts: null };
+}
+
+/* ============================================================
+   ROUTE CALCULATION
+   ============================================================ */
+async function calculateRoute() {
+  if (!activeTrip) return;
+  setStatus('Berechne Route…');
+  $('table-content').innerHTML = '<div class="empty-state">Berechne…</div>';
+  clearMap();
+  computedDays = [];
+  clearLog();
+  addLog('=== Berechnung gestartet ===');
+
+  const allBounds = [];
+  let globalMarkerIdx = 0;
+  const skippedPlaces = [];
+
+  for (let di = 0; di < activeTrip.days.length; di++) {
+    const day = activeTrip.days[di];
+    const color = DAY_COLORS[di % DAY_COLORS.length];
+    const places = day.places.filter(p => p.name && p.name.trim() !== '');
+    if (places.length < 2) {
+      addLog('Tag ' + (di + 1) + ' (' + day.label + '): nur ' + places.length + ' Orte – übersprungen', 'warn');
+      continue;
+    }
+
+    setStatus('Geocodiere Tag ' + (di + 1) + ': ' + day.label + '…');
+    addLog('--- Tag ' + (di + 1) + ': ' + day.label + ' ---');
+    const coords = [];
+    for (const place of places) {
+      const c = await geocode(place.name);
+      if (!c) {
+        addLog('✗ "' + place.name + '" konnte nicht gefunden werden – wird übersprungen', 'error');
+        skippedPlaces.push(place.name);
+        continue;
+      }
+      coords.push({ lat: c.lat, lon: c.lon, label: place.name, transport: place.transport });
+    }
+
+    if (coords.length < 2) {
+      addLog('Tag ' + (di + 1) + ': zu wenige gefundene Orte – übersprungen', 'warn');
+      continue;
+    }
+
+    const segments = [];
+    let dayDist = 0, dayTime = 0;
+    const dayBounds = [];
+
+    for (let si = 0; si < coords.length - 1; si++) {
+      const from = coords[si];
+      const to = coords[si + 1];
+      const mode = getMode(from.transport);
+      setStatus('Berechne ' + from.label + ' → ' + to.label + '…');
+      addLog('Route: ' + from.label + ' → ' + to.label + ' (' + mode.label + ')');
+      const seg = await calcSegment(from, to, mode);
+      addLog('  ' + formatDist(seg.dist) + ' · ' + formatTime(seg.dur), 'success');
+      dayDist += seg.dist;
+      dayTime += seg.dur;
+
+      if (mapReady) {
+        const opts = { color: color, weight: mode.lineWidth, opacity: 0.9 };
+        if (mode.dash) opts.dashArray = mode.dash;
+        if (seg.pts) {
+          L.polyline(seg.pts.map(p => [p[1], p[0]]), opts).addTo(routeLayer);
+        } else {
+          L.polyline([[from.lat, from.lon], [to.lat, to.lon]], opts).addTo(routeLayer);
+        }
+      }
+      segments.push({ from: from.label, to: to.label, dist: seg.dist, dur: seg.dur, mode, color });
+    }
+
+    if (mapReady) {
+      coords.forEach((c) => {
+        globalMarkerIdx++;
+        const isFirst = globalMarkerIdx === 1;
+        const markerCol = isFirst ? '#2d6a4f' : color;
+        const icon = L.divIcon({
+          className: '',
+          iconSize: [26, 26],
+          iconAnchor: [13, 13],
+          html: '<div style="background:' + markerCol + ';color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.3);">' + globalMarkerIdx + '</div>',
+        });
+        L.marker([c.lat, c.lon], { icon }).addTo(routeLayer).bindTooltip('<b>' + globalMarkerIdx + '. ' + esc(c.label) + '</b>');
+        allBounds.push([c.lat, c.lon]);
+        dayBounds.push([c.lat, c.lon]);
+      });
+    } else {
+      coords.forEach(c => { globalMarkerIdx++; allBounds.push([c.lat, c.lon]); dayBounds.push([c.lat, c.lon]); });
+    }
+
+    computedDays.push({
+      dayIndex: di,
+      label: day.label,
+      color,
+      segments,
+      totalDist: dayDist,
+      totalTime: dayTime,
+      bounds: dayBounds,
+      hotel: day.hotel,
+      expenses: day.expenses,
+    });
+  }
+
+  if (allBounds.length === 0) {
+    setStatus('❌ Keine gültigen Orte gefunden. Klicke auf «Log anzeigen» für Details.', 'error');
+    addLog('=== Keine Routen gefunden ===', 'error');
+    return;
+  }
+
+  if (mapReady) {
+    try { map.fitBounds(allBounds, { padding: [50, 50] }); } catch {}
+    renderMapLegend();
+  }
+  renderTable();
+
+  const totalDist = computedDays.reduce((s, d) => s + d.totalDist, 0);
+  const totalTime = computedDays.reduce((s, d) => s + d.totalTime, 0);
+
+  let statusMsg = globalMarkerIdx + ' Orte · ' + formatDist(totalDist) + ' · ' + formatTime(totalTime);
+  if (skippedPlaces.length) {
+    statusMsg += ' · ⚠️ ' + skippedPlaces.length + ' Ort(e) nicht gefunden';
+    addLog('=== Berechnung fertig (mit ' + skippedPlaces.length + ' übersprungenen Orten) ===', 'warn');
+    setStatus(statusMsg, 'error');
+  } else {
+    addLog('=== Berechnung erfolgreich ===', 'success');
+    setStatus(statusMsg, 'success');
+  }
+
+  $('table-title').textContent = activeTrip.emoji + ' ' + activeTrip.name;
+  refreshBudgetBadge();
+}
+
+/* ============================================================
+   TABLE RENDERING
+   ============================================================ */
+function renderTable() {
+  const c = getCurrency();
+
+  let routeRows = '';
+  // Track cumulative count of places so segment numbers continue across days.
+  // Segment N in the table = "from place N to place N+1" using global numbers.
+  let globalPlaceCount = 0;
+  computedDays.forEach(cd => {
+    routeRows += '<tr class="row-day-header"><td colspan="8">' +
+      '<span class="col-dot" style="background:' + cd.color + '"></span>' +
+      esc(cd.label) + ' · ' + formatDist(cd.totalDist) + ' · ' + formatTime(cd.totalTime) +
+      '</td></tr>';
+    cd.segments.forEach((seg, si) => {
+      const savedPrice = getSegPrice(cd.dayIndex, si);
+      const segNumber = globalPlaceCount + si + 1;
+      routeRows += '<tr>' +
+        '<td class="col-faint">' + segNumber + '</td>' +
+        '<td><span class="col-dot" style="background:' + seg.color + '"></span>' + esc(seg.from) + '</td>' +
+        '<td style="color:#ccc">→</td>' +
+        '<td>' + esc(seg.to) + '</td>' +
+        '<td class="col-green">' + formatDist(seg.dist) + '</td>' +
+        '<td class="col-blue">' + formatTime(seg.dur) + '</td>' +
+        '<td class="col-faint">' + seg.mode.label + '</td>' +
+        '<td><input class="price-input" type="number" min="0" placeholder="0" value="' + esc(savedPrice) +
+        '" data-day="' + cd.dayIndex + '" data-seg="' + si + '" data-price-input></td>' +
+        '</tr>';
+    });
+    // Each day has (segments.length + 1) places total
+    globalPlaceCount += cd.segments.length + 1;
+  });
+
+  const transportTotal = calcTransportTotal();
+  routeRows += '<tr class="row-subtotal">' +
+    '<td colspan="7" style="text-align:right;padding-right:10px">Transportkosten Total</td>' +
+    '<td id="cell-transport-total" style="text-align:right">' +
+    (transportTotal > 0 ? formatPrice(transportTotal) + ' ' + c : '–') +
+    '</td></tr>';
+
+  let budgetRows = '';
+  let hasBudget = false;
+  computedDays.forEach(cd => {
+    const hotel = cd.hotel || {};
+    const expenses = cd.expenses || [];
+    const hasHotel = hotel.name || parseFloat(hotel.pricePerNight) > 0;
+    const hasExp = expenses.some(e => e.description || parseFloat(e.amount) > 0);
+    if (!hasHotel && !hasExp) return;
+    hasBudget = true;
+
+    budgetRows += '<tr class="row-day-header"><td colspan="3">' +
+      '<span class="col-dot" style="background:' + cd.color + '"></span>' +
+      esc(cd.label) + '</td></tr>';
+
+    if (hasHotel) {
+      const total = parseFloat(hotel.pricePerNight || 0) * parseFloat(hotel.nights || 1);
+      const nightsNote = parseFloat(hotel.nights) > 1 ? ' (' + hotel.nights + ' Nächte)' : '';
+      const priceNote = parseFloat(hotel.pricePerNight) > 0 ? ' · ' + formatPrice(hotel.pricePerNight) + ' ' + c + '/Nacht' : '';
+      budgetRows += '<tr class="row-hotel">' +
+        '<td>🏨</td>' +
+        '<td>' + esc(hotel.name || 'Hotel') + '<span class="col-faint">' + esc(nightsNote) + esc(priceNote) + '</span></td>' +
+        '<td class="col-gold" style="text-align:right">' + (total > 0 ? formatPrice(total) + ' ' + c : '') + '</td>' +
+        '</tr>';
+    }
+    expenses.forEach(ex => {
+      if (!ex.description && !parseFloat(ex.amount)) return;
+      budgetRows += '<tr class="row-expense">' +
+        '<td>' + getCatLabel(ex.category).split(' ')[0] + '</td>' +
+        '<td>' + esc(ex.description || getCatLabel(ex.category)) + '</td>' +
+        '<td class="col-red" style="text-align:right">' +
+        (parseFloat(ex.amount) > 0 ? formatPrice(ex.amount) + ' ' + c : '') +
+        '</td></tr>';
+    });
+  });
+
+  const ht = calcHotelTotal();
+  const et = calcExpensesTotal();
+  const gt = transportTotal + ht + et;
+
+  budgetRows += '<tr class="budget-divider"><td colspan="3"></td></tr>' +
+    '<tr><td class="col-faint" colspan="2" style="text-align:right;padding-right:10px">🚗 Transportkosten</td>' +
+    '<td id="cell-transport-summary" style="text-align:right;color:var(--green-dark);font-weight:600">' +
+    (transportTotal > 0 ? formatPrice(transportTotal) + ' ' + c : '–') + '</td></tr>' +
+    '<tr><td class="col-faint" colspan="2" style="text-align:right;padding-right:10px">🏨 Unterkunft</td>' +
+    '<td class="col-gold" style="text-align:right">' + (ht > 0 ? formatPrice(ht) + ' ' + c : '–') + '</td></tr>' +
+    '<tr><td class="col-faint" colspan="2" style="text-align:right;padding-right:10px">💸 Weitere Ausgaben</td>' +
+    '<td class="col-red" style="text-align:right">' + (et > 0 ? formatPrice(et) + ' ' + c : '–') + '</td></tr>' +
+    '<tr class="row-grand-total"><td colspan="2" style="text-align:right;padding-right:10px">💰 Gesamtkosten</td>' +
+    '<td id="cell-grand-total" style="text-align:right;font-size:0.9rem">' +
+    (gt > 0 ? '<strong>' + formatPrice(gt) + '</strong> ' + c : '–') + '</td></tr>';
+
+  $('table-content').innerHTML =
+    '<div class="table-section-label">🛣️ Route &amp; Strecke</div>' +
+    '<table class="data-table" id="route-table"><thead><tr>' +
+    '<th>#</th><th>Von</th><th></th><th>Nach</th>' +
+    '<th>Distanz</th><th>Zeit</th><th>Transport</th>' +
+    '<th style="text-align:right">Kosten (' + esc(c) + ')</th>' +
+    '</tr></thead><tbody>' + routeRows + '</tbody></table>' +
+    '<div class="table-section-label" style="margin-top:6px;border-top:2px solid var(--border);padding-top:8px">💰 Kosten &amp; Budget</div>' +
+    '<table class="data-table" id="budget-table"><thead><tr>' +
+    '<th style="width:28px"></th><th>Beschreibung</th>' +
+    '<th style="text-align:right">Betrag (' + esc(c) + ')</th>' +
+    '</tr></thead><tbody>' + budgetRows + '</tbody></table>';
+
+  document.querySelectorAll('[data-price-input]').forEach(input => {
+    input.addEventListener('input', () => {
+      setSegPrice(parseInt(input.dataset.day), parseInt(input.dataset.seg), input.value);
+      updateTotalsInPlace();
+    });
+  });
+}
+
+function updateTotalsInPlace() {
+  const c = getCurrency();
+  const tt = calcTransportTotal();
+  const ht = calcHotelTotal();
+  const et = calcExpensesTotal();
+  const gt = tt + ht + et;
+  const cellTT = $('cell-transport-total');
+  const cellTS = $('cell-transport-summary');
+  const cellGT = $('cell-grand-total');
+  if (cellTT) cellTT.textContent = tt > 0 ? formatPrice(tt) + ' ' + c : '–';
+  if (cellTS) cellTS.textContent = tt > 0 ? formatPrice(tt) + ' ' + c : '–';
+  if (cellGT) cellGT.innerHTML = gt > 0 ? '<strong>' + formatPrice(gt) + '</strong> ' + c : '–';
+  refreshBudgetBadge();
+}
+
+function refreshBudgetBadge() {
+  const gt = calcGrandTotal();
+  const badge = $('budget-badge');
+  if (!badge) return;
+  badge.textContent = gt > 0 ? '💰 Total: ' + formatPrice(gt) + ' ' + getCurrency() : '';
+}
+
+/* ============================================================
+   TRIP LIST RENDERING
+   ============================================================ */
+function renderTripList() {
+  const container = $('trip-list');
+  if (!container) return;
+  if (!trips.length) {
+    container.innerHTML = '<div style="font-size:0.77rem;color:var(--text-faint)">Noch keine Reisen.</div>';
+    return;
+  }
+  container.innerHTML = trips.map(trip =>
+    '<div class="trip-item' + (activeTrip && activeTrip.id === trip.id ? ' active' : '') +
+    '" data-trip-id="' + trip.id + '">' +
+    '<span class="emoji">' + trip.emoji + '</span>' +
+    '<span class="name">' + esc(trip.name) + '</span>' +
+    '<button class="del-btn" data-delete-trip="' + trip.id + '" title="Löschen">✕</button>' +
+    '</div>'
+  ).join('');
+}
+
+function showTripPanels(show) {
+  const panels = ['panel-days', 'panel-export'];
+  panels.forEach(id => {
+    const p = $(id);
+    if (p) p.style.display = show ? '' : 'none';
+  });
+}
+
+/* ============================================================
+   DAYS RENDERING
+   ============================================================ */
+function renderDays() {
+  const container = $('days-list');
+  if (!container) return;
+  if (!activeTrip) { container.innerHTML = ''; return; }
+
+  // Calculate cumulative offset: how many places exist BEFORE each day.
+  // Counts every place (even empty ones) so the sidebar numbering
+  // matches the order the user sees while editing.
+  const offsets = [];
+  let runningOffset = 0;
+  activeTrip.days.forEach(day => {
+    offsets.push(runningOffset);
+    runningOffset += (day.places || []).length;
+  });
+
+  container.innerHTML = activeTrip.days.map((day, di) => {
+    const color = DAY_COLORS[di % DAY_COLORS.length];
+    const placeOffset = offsets[di];
+    if (!day.hotel) day.hotel = { open: false, name: '', pricePerNight: '', nights: '1' };
+    if (!day.expenses) day.expenses = [];
+
+    // Places
+    const placesHtml = day.places.map((place, pi) => {
+      const isLast = pi === day.places.length - 1;
+      const canDel = day.places.length > 2;
+      const numColor = isLast ? '#c05621' : color;
+      const placeNumber = placeOffset + pi + 1;
+
+      let html = '<div class="place-block" data-day="' + di + '" data-place="' + pi + '">' +
+        '<div class="place-row">' +
+        '<span class="place-drag-handle" data-place-handle="' + di + '_' + pi + '" title="Verschieben">⠿</span>' +
+        '<div class="place-num" style="background:' + numColor + '">' + placeNumber + '</div>' +
+        '<input class="place-input" type="text" value="' + esc(place.name) +
+        '" placeholder="Ort eingeben…" data-day="' + di + '" data-place="' + pi + '" data-place-name>' +
+        (canDel ? '<button class="place-delete-btn" data-day="' + di + '" data-place="' + pi + '" data-delete-place title="Entfernen">✕</button>' : '') +
+        '</div>';
+
+      if (!isLast) {
+        const modeBtns = MODES.map(m =>
+          '<button class="seg-mode-btn' + (place.transport === m.id ? ' selected' : '') +
+          '" data-day="' + di + '" data-place="' + pi + '" data-set-transport="' + m.id + '">' +
+          m.label + '</button>'
+        ).join('');
+        html += '<div class="segment-transport"><span class="seg-label">' + placeNumber + '→' + (placeNumber + 1) + ':</span>' + modeBtns + '</div>';
+      }
+      return html + '</div>';
+    }).join('');
+
+    // Hotel
+    const h = day.hotel;
+    const hotelHtml = '<div class="section-toggle hotel-toggle" data-toggle-hotel="' + di + '">' +
+      '<span>🏨 Hotel / Unterkunft</span><span class="arrow">' + (h.open ? '▲' : '▼') + '</span></div>' +
+      '<div class="hotel-body' + (h.open ? ' open' : '') + '">' +
+      '<div class="form-row"><span class="form-label">Name</span>' +
+      '<input class="form-input" type="text" value="' + esc(h.name || '') + '" placeholder="Hotelname…" data-day="' + di + '" data-hotel-field="name"></div>' +
+      '<div class="form-row"><span class="form-label">Preis/Nacht</span>' +
+      '<input class="form-input narrow" type="number" min="0" value="' + esc(h.pricePerNight || '') +
+      '" placeholder="0" data-day="' + di + '" data-hotel-field="pricePerNight">' +
+      '<span class="form-currency">' + esc(getCurrency()) + '</span>' +
+      '<span class="form-label" style="width:40px;margin-left:6px">Nächte</span>' +
+      '<input class="form-input narrow" type="number" min="1" max="365" value="' + esc(h.nights || '1') +
+      '" data-day="' + di + '" data-hotel-field="nights"></div></div>';
+
+    // Expenses
+    const expRowsHtml = day.expenses.length
+      ? day.expenses.map((ex, ei) => {
+          const catOptions = EXP_CATS.map(cat =>
+            '<option value="' + cat.id + '"' + (ex.category === cat.id ? ' selected' : '') + '>' + cat.label + '</option>'
+          ).join('');
+          return '<div class="expense-row">' +
+            '<select class="exp-cat-select" data-day="' + di + '" data-exp="' + ei + '" data-exp-field="category">' + catOptions + '</select>' +
+            '<input class="exp-desc-input" type="text" value="' + esc(ex.description || '') +
+            '" placeholder="Beschreibung" data-day="' + di + '" data-exp="' + ei + '" data-exp-field="description">' +
+            '<input class="exp-amt-input" type="number" min="0" value="' + esc(ex.amount || '') +
+            '" placeholder="0" data-day="' + di + '" data-exp="' + ei + '" data-exp-field="amount">' +
+            '<span style="font-size:0.65rem;color:var(--text-faint)">' + esc(getCurrency()) + '</span>' +
+            '<button class="exp-delete-btn" data-day="' + di + '" data-exp="' + ei + '" data-delete-exp title="Entfernen">✕</button>' +
+            '</div>';
+        }).join('')
+      : '<div class="exp-empty">Keine Ausgaben. Klicke +.</div>';
+    const expHtml = '<div class="section-toggle exp-toggle" data-toggle-exp="' + di + '">' +
+      '<span>💸 Weitere Ausgaben</span>' +
+      '<button class="btn small ghost" data-add-expense="' + di + '" style="padding:1px 6px;font-size:0.63rem;margin-left:4px">+ hinzufügen</button>' +
+      '<span class="arrow">' + (day.expensesOpen ? '▲' : '▼') + '</span></div>' +
+      '<div class="exp-body' + (day.expensesOpen ? ' open' : '') + '">' + expRowsHtml + '</div>';
+
+    const bodyClass = 'day-body' + (day.collapsed ? ' collapsed' : '');
+    return '<div class="day-block" data-day-block="' + di + '">' +
+      '<div class="day-header">' +
+      '<span class="day-drag-handle" data-day-handle="' + di + '" title="Tag verschieben">⠿</span>' +
+      '<div class="day-color-dot" style="background:' + color + '"></div>' +
+      '<input class="day-name-input" type="text" value="' + esc(day.label) + '" data-day="' + di + '" data-day-label>' +
+      '<button class="day-collapse-btn" data-collapse-day="' + di + '" title="Auf/Zuklappen">' + (day.collapsed ? '▼' : '▲') + '</button>' +
+      '<button class="day-delete-btn" data-delete-day="' + di + '" title="Tag löschen">✕</button>' +
+      '</div>' +
+      '<div class="' + bodyClass + '">' +
+      '<div class="places-list" data-places-of-day="' + di + '">' + placesHtml + '</div>' +
+      '<div style="margin-top:5px"><button class="btn small ghost" data-add-place="' + di + '" style="width:100%">+ Ort hinzufügen</button></div>' +
+      hotelHtml + expHtml +
+      '</div></div>';
+  }).join('');
+}
+
+/* ============================================================
+   DRAG & DROP  (custom, reliable, handle-based)
+   Uses pointer/mouse events instead of HTML5 drag API.
+   ============================================================ */
+const DnD = {
+  mode: null,         // 'day' or 'place'
+  srcDayIdx: null,
+  srcPlaceIdx: null,
+  ghostEl: null,
+  startX: 0,
+  startY: 0,
+  started: false,
+  scrollAnim: null,
+
+  startDay(dayIdx, startX, startY) {
+    this.mode = 'day';
+    this.srcDayIdx = dayIdx;
+    this.startX = startX;
+    this.startY = startY;
+    this.started = false;
+  },
+
+  startPlace(dayIdx, placeIdx, startX, startY) {
+    this.mode = 'place';
+    this.srcDayIdx = dayIdx;
+    this.srcPlaceIdx = placeIdx;
+    this.startX = startX;
+    this.startY = startY;
+    this.started = false;
+  },
+
+  activate(currentX, currentY) {
+    if (this.started) return;
+    const dx = Math.abs(currentX - this.startX);
+    const dy = Math.abs(currentY - this.startY);
+    if (dx < 4 && dy < 4) return; // need to move a bit to start drag
+    this.started = true;
+
+    let srcEl;
+    if (this.mode === 'day') {
+      srcEl = document.querySelector('[data-day-block="' + this.srcDayIdx + '"]');
+    } else {
+      srcEl = document.querySelector('[data-day="' + this.srcDayIdx + '"][data-place="' + this.srcPlaceIdx + '"]');
+    }
+    if (srcEl) srcEl.classList.add('dragging');
+
+    // Create ghost
+    this.ghostEl = srcEl ? srcEl.cloneNode(true) : null;
+    if (this.ghostEl) {
+      this.ghostEl.style.position = 'fixed';
+      this.ghostEl.style.pointerEvents = 'none';
+      this.ghostEl.style.opacity = '0.85';
+      this.ghostEl.style.zIndex = '10000';
+      this.ghostEl.style.width = srcEl.offsetWidth + 'px';
+      this.ghostEl.style.boxShadow = '0 4px 12px rgba(0,0,0,0.2)';
+      this.ghostEl.classList.remove('dragging');
+      document.body.appendChild(this.ghostEl);
+    }
+  },
+
+  update(x, y) {
+    if (!this.started) this.activate(x, y);
+    if (!this.started) return;
+
+    // Move ghost
+    if (this.ghostEl) {
+      this.ghostEl.style.left = (x + 8) + 'px';
+      this.ghostEl.style.top = (y - 10) + 'px';
+    }
+
+    // Highlight target
+    if (this.mode === 'day') this.updateDayTarget(x, y);
+    else this.updatePlaceTarget(x, y);
+
+    // Auto-scroll sidebar if near top/bottom
+    this.autoScroll(y);
+  },
+
+  updateDayTarget(x, y) {
+    const blocks = document.querySelectorAll('[data-day-block]');
+    document.querySelectorAll('.day-block.drop-above,.day-block.drop-below').forEach(b => {
+      b.classList.remove('drop-above', 'drop-below');
+    });
+    for (const block of blocks) {
+      const di = parseInt(block.dataset.dayBlock);
+      if (di === this.srcDayIdx) continue;
+      const rect = block.getBoundingClientRect();
+      if (y >= rect.top && y <= rect.bottom && x >= rect.left && x <= rect.right) {
+        const mid = rect.top + rect.height / 2;
+        if (y < mid) block.classList.add('drop-above');
+        else block.classList.add('drop-below');
+        return;
+      }
+    }
+  },
+
+  updatePlaceTarget(x, y) {
+    const blocks = document.querySelectorAll('[data-places-of-day="' + this.srcDayIdx + '"] .place-block');
+    document.querySelectorAll('.place-block.drop-above-place,.place-block.drop-below-place').forEach(b => {
+      b.classList.remove('drop-above-place', 'drop-below-place');
+    });
+    for (const block of blocks) {
+      const pi = parseInt(block.dataset.place);
+      if (pi === this.srcPlaceIdx) continue;
+      const rect = block.getBoundingClientRect();
+      if (y >= rect.top && y <= rect.bottom && x >= rect.left && x <= rect.right) {
+        const mid = rect.top + rect.height / 2;
+        if (y < mid) block.classList.add('drop-above-place');
+        else block.classList.add('drop-below-place');
+        return;
+      }
+    }
+  },
+
+  autoScroll(y) {
+    const sidebar = $('sidebar');
+    if (!sidebar) return;
+    const rect = sidebar.getBoundingClientRect();
+    const margin = 40;
+    if (y < rect.top + margin) {
+      sidebar.scrollTop -= 6;
+    } else if (y > rect.bottom - margin) {
+      sidebar.scrollTop += 6;
+    }
+  },
+
+  end(x, y) {
+    if (this.started) {
+      if (this.mode === 'day') this.dropDay(x, y);
+      else this.dropPlace(x, y);
+    }
+    this.cleanup();
+  },
+
+  dropDay(x, y) {
+    const blocks = document.querySelectorAll('[data-day-block]');
+    for (const block of blocks) {
+      const di = parseInt(block.dataset.dayBlock);
+      if (di === this.srcDayIdx) continue;
+      const rect = block.getBoundingClientRect();
+      if (y >= rect.top && y <= rect.bottom && x >= rect.left && x <= rect.right) {
+        const mid = rect.top + rect.height / 2;
+        const insertBefore = y < mid;
+        const src = this.srcDayIdx;
+        const tgt = di;
+        if (!activeTrip) return;
+        const moved = activeTrip.days.splice(src, 1)[0];
+        let newIdx = tgt > src ? tgt - 1 : tgt;
+        if (!insertBefore) newIdx++;
+        activeTrip.days.splice(newIdx, 0, moved);
+        saveToStorage();
+        renderDays();
+        return;
+      }
+    }
+  },
+
+  dropPlace(x, y) {
+    const blocks = document.querySelectorAll('[data-places-of-day="' + this.srcDayIdx + '"] .place-block');
+    for (const block of blocks) {
+      const pi = parseInt(block.dataset.place);
+      if (pi === this.srcPlaceIdx) continue;
+      const rect = block.getBoundingClientRect();
+      if (y >= rect.top && y <= rect.bottom && x >= rect.left && x <= rect.right) {
+        const mid = rect.top + rect.height / 2;
+        const insertBefore = y < mid;
+        const src = this.srcPlaceIdx;
+        const tgt = pi;
+        if (!activeTrip) return;
+        const places = activeTrip.days[this.srcDayIdx].places;
+        const moved = places.splice(src, 1)[0];
+        let newIdx = tgt > src ? tgt - 1 : tgt;
+        if (!insertBefore) newIdx++;
+        places.splice(newIdx, 0, moved);
+        saveToStorage();
+        renderDays();
+        return;
+      }
+    }
+  },
+
+  cleanup() {
+    if (this.ghostEl) {
+      this.ghostEl.remove();
+      this.ghostEl = null;
+    }
+    document.querySelectorAll('.day-block.drop-above,.day-block.drop-below,.day-block.dragging').forEach(b => {
+      b.classList.remove('drop-above', 'drop-below', 'dragging');
+    });
+    document.querySelectorAll('.place-block.drop-above-place,.place-block.drop-below-place,.place-block.dragging').forEach(b => {
+      b.classList.remove('drop-above-place', 'drop-below-place', 'dragging');
+    });
+    this.mode = null;
+    this.srcDayIdx = null;
+    this.srcPlaceIdx = null;
+    this.started = false;
+  },
+};
+
+// Pointer events on the days-list container
+document.addEventListener('mousedown', e => {
+  const dayHandle = e.target.closest('[data-day-handle]');
+  const placeHandle = e.target.closest('[data-place-handle]');
+  if (dayHandle) {
+    e.preventDefault();
+    const di = parseInt(dayHandle.dataset.dayHandle);
+    DnD.startDay(di, e.clientX, e.clientY);
+  } else if (placeHandle) {
+    e.preventDefault();
+    const [di, pi] = placeHandle.dataset.placeHandle.split('_').map(Number);
+    DnD.startPlace(di, pi, e.clientX, e.clientY);
+  }
+});
+
+document.addEventListener('mousemove', e => {
+  if (DnD.mode) DnD.update(e.clientX, e.clientY);
+});
+
+document.addEventListener('mouseup', e => {
+  if (DnD.mode) DnD.end(e.clientX, e.clientY);
+});
+
+// Touch support
+document.addEventListener('touchstart', e => {
+  const dayHandle = e.target.closest('[data-day-handle]');
+  const placeHandle = e.target.closest('[data-place-handle]');
+  if (!dayHandle && !placeHandle) return;
+  const t = e.touches[0];
+  if (dayHandle) {
+    DnD.startDay(parseInt(dayHandle.dataset.dayHandle), t.clientX, t.clientY);
+  } else {
+    const [di, pi] = placeHandle.dataset.placeHandle.split('_').map(Number);
+    DnD.startPlace(di, pi, t.clientX, t.clientY);
+  }
+}, { passive: true });
+
+document.addEventListener('touchmove', e => {
+  if (!DnD.mode) return;
+  const t = e.touches[0];
+  DnD.update(t.clientX, t.clientY);
+  if (DnD.started) e.preventDefault();
+}, { passive: false });
+
+document.addEventListener('touchend', e => {
+  if (!DnD.mode) return;
+  const t = e.changedTouches[0];
+  DnD.end(t.clientX, t.clientY);
+});
+
+/* ============================================================
+   EVENT HANDLERS: TRIP LIST
+   ============================================================ */
+document.addEventListener('click', e => {
+  // Delete trip
+  const delTrip = e.target.dataset ? e.target.dataset.deleteTrip : null;
+  if (delTrip) {
+    e.stopPropagation();
+    if (!confirm('Reise wirklich löschen?')) return;
+    const id = parseInt(delTrip);
+    trips = trips.filter(t => t.id !== id);
+    if (activeTrip && activeTrip.id === id) {
+      activeTrip = null;
+      showTripPanels(false);
+      clearMap();
+      $('table-content').innerHTML = '<div class="empty-state">Wähle eine Reise.</div>';
+      $('table-title').textContent = 'Routenübersicht';
+      $('budget-badge').textContent = '';
+    }
+    saveToStorage();
+    renderTripList();
+    return;
+  }
+  // Select trip
+  const tripItem = e.target.closest('.trip-item');
+  if (tripItem && tripItem.dataset.tripId) {
+    const id = parseInt(tripItem.dataset.tripId);
+    activeTrip = trips.find(t => t.id === id);
+    renderTripList();
+    showTripPanels(true);
+    renderDays();
+    clearMap();
+    $('table-content').innerHTML = '<div class="empty-state">Orte eingeben und «Berechnen».</div>';
+    $('table-title').textContent = 'Routenübersicht';
+    $('budget-badge').textContent = '';
+    setStatus('Bereit');
+    return;
+  }
+});
+
+/* ============================================================
+   EVENT HANDLERS: DAYS (via event delegation on #days-list)
+   ============================================================ */
+$('days-list').addEventListener('click', e => {
+  if (!activeTrip) return;
+
+  const t = e.target;
+
+  // Collapse/expand day
+  const collapseBtn = t.closest('[data-collapse-day]');
+  if (collapseBtn) {
+    const di = parseInt(collapseBtn.dataset.collapseDay);
+    activeTrip.days[di].collapsed = !activeTrip.days[di].collapsed;
+    saveToStorage(); renderDays(); return;
+  }
+
+  // Delete day
+  const delDay = t.closest('[data-delete-day]');
+  if (delDay) {
+    e.stopPropagation();
+    const di = parseInt(delDay.dataset.deleteDay);
+    if (activeTrip.days.length <= 1) { alert('Mindestens ein Tag ist nötig.'); return; }
+    if (!confirm('Tag löschen?')) return;
+    activeTrip.days.splice(di, 1);
+    saveToStorage(); renderDays(); return;
+  }
+
+  // Add place
+  const addPlace = t.closest('[data-add-place]');
+  if (addPlace) {
+    const di = parseInt(addPlace.dataset.addPlace);
+    const prev = activeTrip.days[di].places;
+    const mode = prev.length ? prev[prev.length - 1].transport : 'driving';
+    activeTrip.days[di].places.push({ name: '', transport: mode });
+    saveToStorage(); renderDays();
+    setTimeout(() => {
+      const inputs = document.querySelectorAll('[data-place-name][data-day="' + di + '"]');
+      if (inputs.length) inputs[inputs.length - 1].focus();
+    }, 30);
+    return;
+  }
+
+  // Delete place
+  const delPlace = t.closest('[data-delete-place]');
+  if (delPlace) {
+    const di = parseInt(delPlace.dataset.day);
+    const pi = parseInt(delPlace.dataset.place);
+    if (activeTrip.days[di].places.length <= 2) return;
+    activeTrip.days[di].places.splice(pi, 1);
+    saveToStorage(); renderDays(); return;
+  }
+
+  // Transport mode
+  const setTransport = t.closest('[data-set-transport]');
+  if (setTransport) {
+    const di = parseInt(setTransport.dataset.day);
+    const pi = parseInt(setTransport.dataset.place);
+    activeTrip.days[di].places[pi].transport = setTransport.dataset.setTransport;
+    saveToStorage(); renderDays(); return;
+  }
+
+  // Toggle hotel
+  const toggleHotel = t.closest('[data-toggle-hotel]');
+  if (toggleHotel && !t.closest('input')) {
+    const di = parseInt(toggleHotel.dataset.toggleHotel);
+    activeTrip.days[di].hotel.open = !activeTrip.days[di].hotel.open;
+    saveToStorage(); renderDays(); return;
+  }
+
+  // Toggle expenses (but not when clicking the + button or inputs)
+  const toggleExp = t.closest('[data-toggle-exp]');
+  if (toggleExp && !t.closest('button') && !t.closest('input')) {
+    const di = parseInt(toggleExp.dataset.toggleExp);
+    activeTrip.days[di].expensesOpen = !activeTrip.days[di].expensesOpen;
+    saveToStorage(); renderDays(); return;
+  }
+
+  // Add expense
+  const addExp = t.closest('[data-add-expense]');
+  if (addExp) {
+    e.stopPropagation();
+    const di = parseInt(addExp.dataset.addExpense);
+    activeTrip.days[di].expensesOpen = true;
+    activeTrip.days[di].expenses.push({ category: 'other', description: '', amount: '' });
+    saveToStorage(); renderDays();
+    setTimeout(() => {
+      const inputs = document.querySelectorAll('[data-exp-field="description"][data-day="' + di + '"]');
+      if (inputs.length) inputs[inputs.length - 1].focus();
+    }, 30);
+    return;
+  }
+
+  // Delete expense
+  const delExp = t.closest('[data-delete-exp]');
+  if (delExp) {
+    const di = parseInt(delExp.dataset.day);
+    const ei = parseInt(delExp.dataset.exp);
+    activeTrip.days[di].expenses.splice(ei, 1);
+    saveToStorage(); renderDays(); return;
+  }
+});
+
+$('days-list').addEventListener('input', e => {
+  if (!activeTrip) return;
+  const t = e.target;
+  if (t.dataset.dayLabel !== undefined) {
+    activeTrip.days[parseInt(t.dataset.day)].label = t.value;
+    saveToStorage(); return;
+  }
+  if (t.dataset.placeName !== undefined) {
+    const di = parseInt(t.dataset.day);
+    const pi = parseInt(t.dataset.place);
+    activeTrip.days[di].places[pi].name = t.value;
+    saveToStorage(); return;
+  }
+  if (t.dataset.hotelField) {
+    const di = parseInt(t.dataset.day);
+    activeTrip.days[di].hotel[t.dataset.hotelField] = t.value;
+    saveToStorage(); updateTotalsInPlace(); return;
+  }
+  if (t.dataset.expField) {
+    const di = parseInt(t.dataset.day);
+    const ei = parseInt(t.dataset.exp);
+    activeTrip.days[di].expenses[ei][t.dataset.expField] = t.value;
+    saveToStorage(); updateTotalsInPlace(); return;
+  }
+});
+
+/* ============================================================
+   NEW TRIP MODAL
+   ============================================================ */
+$('btn-new-trip').addEventListener('click', () => {
+  $('input-trip-name').value = '';
+  $('input-currency').value = 'CHF';
+  document.querySelectorAll('.emoji-btn').forEach(b => b.classList.remove('selected'));
+  document.querySelector('.emoji-btn[data-emoji="🌍"]').classList.add('selected');
+  selectedEmoji = '🌍';
+  $('modal-new-trip').classList.add('open');
+  setTimeout(() => $('input-trip-name').focus(), 80);
+});
+$('emoji-picker').addEventListener('click', e => {
+  const btn = e.target.closest('.emoji-btn');
+  if (!btn) return;
+  document.querySelectorAll('.emoji-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  selectedEmoji = btn.dataset.emoji;
+});
+$('btn-cancel-new-trip').addEventListener('click', () => $('modal-new-trip').classList.remove('open'));
+$('input-trip-name').addEventListener('keydown', e => { if (e.key === 'Enter') confirmNewTrip(); });
+$('btn-confirm-new-trip').addEventListener('click', confirmNewTrip);
+
+function confirmNewTrip() {
+  const name = $('input-trip-name').value.trim();
+  if (!name) { $('input-trip-name').focus(); return; }
+  const currency = $('input-currency').value.trim() || 'CHF';
+  const trip = createTrip(name, currency, selectedEmoji);
+  trips.push(trip);
+  saveToStorage();
+  $('modal-new-trip').classList.remove('open');
+  activeTrip = trip;
+  renderTripList();
+  showTripPanels(true);
+  renderDays();
+  clearMap();
+  $('table-content').innerHTML = '<div class="empty-state">Orte eingeben und «Berechnen».</div>';
+  setStatus('Neue Reise erstellt.', 'success');
+}
+
+/* ============================================================
+   ADD DAYS
+   ============================================================ */
+$('btn-add-day').addEventListener('click', () => {
+  if (!activeTrip) return;
+  activeTrip.days.push(createDay('Tag ' + (activeTrip.days.length + 1)));
+  saveToStorage(); renderDays();
+  setTimeout(() => { $('sidebar').scrollTop = $('sidebar').scrollHeight; }, 30);
+});
+$('btn-add-week').addEventListener('click', () => {
+  if (!activeTrip) return;
+  for (let i = 0; i < 7; i++) {
+    activeTrip.days.push(createDay('Tag ' + (activeTrip.days.length + 1)));
+  }
+  saveToStorage(); renderDays();
+  setTimeout(() => { $('sidebar').scrollTop = $('sidebar').scrollHeight; }, 30);
+});
+$('btn-add-n-days').addEventListener('click', () => {
+  $('input-n-days').value = '3';
+  $('modal-add-days').classList.add('open');
+  setTimeout(() => $('input-n-days').focus(), 80);
+});
+$('btn-cancel-add-days').addEventListener('click', () => $('modal-add-days').classList.remove('open'));
+$('btn-confirm-add-days').addEventListener('click', () => {
+  const n = parseInt($('input-n-days').value);
+  if (!n || n < 1 || n > 90) { alert('Bitte eine Zahl zwischen 1 und 90 eingeben.'); return; }
+  for (let i = 0; i < n; i++) {
+    activeTrip.days.push(createDay('Tag ' + (activeTrip.days.length + 1)));
+  }
+  saveToStorage();
+  $('modal-add-days').classList.remove('open');
+  renderDays();
+  setTimeout(() => { $('sidebar').scrollTop = $('sidebar').scrollHeight; }, 30);
+});
+
+/* ============================================================
+   CALCULATE
+   ============================================================ */
+$('btn-calculate').addEventListener('click', () => {
+  calculateRoute().catch(err => {
+    console.error('Route calc error:', err);
+    setStatus('Fehler: ' + err.message, 'error');
+  });
+});
+
+/* ============================================================
+   IMPORT / EXPORT
+   ============================================================ */
+$('btn-export-json').addEventListener('click', () => {
+  if (!activeTrip) { setStatus('Keine Reise ausgewählt.', 'error'); return; }
+  const blob = new Blob([JSON.stringify(activeTrip, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.download = safeName(activeTrip.name) + '_reise.json';
+  a.href = URL.createObjectURL(blob);
+  a.click();
+  setStatus('Reise exportiert.', 'success');
+});
+
+$('btn-import').addEventListener('click', () => $('file-import-input').click());
+$('file-import-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (!data.name || !Array.isArray(data.days)) { alert('Ungültige Reisedatei.'); return; }
+      data.id = Date.now();
+      data.days.forEach(day => {
+        if (!day.hotel) day.hotel = { open: false, name: '', pricePerNight: '', nights: '1' };
+        if (!day.expenses) day.expenses = [];
+        if (!day.places) day.places = [{ name: '', transport: 'driving' }, { name: '', transport: 'driving' }];
+        day.places.forEach(p => { if (!p.transport) p.transport = 'driving'; });
+      });
+      if (!data.segPrices) data.segPrices = {};
+      trips.push(data);
+      saveToStorage();
+      activeTrip = data;
+      renderTripList();
+      showTripPanels(true);
+      renderDays();
+      clearMap();
+      setStatus('Reise «' + data.name + '» importiert.', 'success');
+    } catch (err) {
+      alert('Fehler beim Import: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
+function buildExportWrapper(title, content) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:fixed;left:-9999px;top:0;background:#fff;padding:12px;font-family:Segoe UI,Arial,sans-serif;min-width:600px;';
+  const label = document.createElement('div');
+  label.style.cssText = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#8aab97;padding-bottom:6px;';
+  label.textContent = title;
+  wrap.appendChild(label);
+  wrap.appendChild(content);
+  return wrap;
+}
+function downloadCanvas(canvas, filename) {
+  const a = document.createElement('a');
+  a.download = filename;
+  a.href = canvas.toDataURL('image/png');
+  a.click();
+}
+
+$('btn-export-route-img').addEventListener('click', async () => {
+  if (!checkHtml2Canvas()) { setStatus('Bildbibliothek nicht geladen.', 'error'); return; }
+  const table = $('route-table');
+  if (!table) { setStatus('Zuerst Route berechnen.', 'error'); return; }
+  setStatus('Exportiere Routentabelle…');
+  try {
+    const wrap = buildExportWrapper('🛣️ Route & Strecke', table.cloneNode(true));
+    document.body.appendChild(wrap);
+    const canvas = await html2canvas(wrap, { scale: 2, backgroundColor: '#fff' });
+    document.body.removeChild(wrap);
+    downloadCanvas(canvas, safeName(activeTrip ? activeTrip.name : 'route') + '_route.png');
+    setStatus('Route gespeichert.', 'success');
+  } catch (err) { setStatus('Fehler: ' + err.message, 'error'); }
+});
+
+$('btn-export-budget-img').addEventListener('click', async () => {
+  if (!checkHtml2Canvas()) { setStatus('Bildbibliothek nicht geladen.', 'error'); return; }
+  const table = $('budget-table');
+  if (!table) { setStatus('Zuerst Route berechnen.', 'error'); return; }
+  setStatus('Exportiere Budget…');
+  try {
+    const wrap = buildExportWrapper('💰 Kosten & Budget', table.cloneNode(true));
+    document.body.appendChild(wrap);
+    const canvas = await html2canvas(wrap, { scale: 2, backgroundColor: '#fff' });
+    document.body.removeChild(wrap);
+    downloadCanvas(canvas, safeName(activeTrip ? activeTrip.name : 'budget') + '_budget.png');
+    setStatus('Budget gespeichert.', 'success');
+  } catch (err) { setStatus('Fehler: ' + err.message, 'error'); }
+});
+
+$('btn-export-zip').addEventListener('click', async () => {
+  if (!checkJSZip()) { setStatus('ZIP-Bibliothek nicht geladen.', 'error'); return; }
+  setStatus('Erstelle ZIP…');
+  const name = safeName(activeTrip ? activeTrip.name : 'reise');
+  const zip = new JSZip();
+  if (activeTrip) zip.file(name + '_reise.json', JSON.stringify(activeTrip, null, 2));
+
+  if (checkHtml2Canvas()) {
+    const routeTable = $('route-table');
+    const budgetTable = $('budget-table');
+    if (routeTable) {
+      try {
+        const w = buildExportWrapper('🛣️ Route & Strecke', routeTable.cloneNode(true));
+        document.body.appendChild(w);
+        const c = await html2canvas(w, { scale: 2, backgroundColor: '#fff' });
+        document.body.removeChild(w);
+        zip.file(name + '_route.png', c.toDataURL('image/png').split(',')[1], { base64: true });
+      } catch {}
+    }
+    if (budgetTable) {
+      try {
+        const w = buildExportWrapper('💰 Kosten & Budget', budgetTable.cloneNode(true));
+        document.body.appendChild(w);
+        const c = await html2canvas(w, { scale: 2, backgroundColor: '#fff' });
+        document.body.removeChild(w);
+        zip.file(name + '_budget.png', c.toDataURL('image/png').split(',')[1], { base64: true });
+      } catch {}
+    }
+  }
+  try {
+    const html = await (await fetch(window.location.href)).text();
+    zip.file('reiseplanung.html', html);
+  } catch {}
+  zip.file('KARTE_SPEICHERN.txt',
+    'Karte speichern:\n1. "Gesamtkarte drucken" klicken\n2. "Als PDF speichern"\n3. Querformat, Raender: Keine\n4. Speichern\n');
+  zip.generateAsync({ type: 'blob' }).then(blob => {
+    const a = document.createElement('a');
+    a.download = name + '_reiseplanung.zip';
+    a.href = URL.createObjectURL(blob);
+    a.click();
+    setStatus('ZIP erstellt.', 'success');
+  });
+});
+
+/* ============================================================
+   MAP PRINT
+   ============================================================ */
+$('btn-print-all').addEventListener('click', () => {
+  if (!mapReady) { setStatus('Karte nicht geladen.', 'error'); return; }
+  $('modal-print-all').classList.add('open');
+});
+$('btn-cancel-print-all').addEventListener('click', () => $('modal-print-all').classList.remove('open'));
+$('btn-confirm-print-all').addEventListener('click', () => {
+  $('modal-print-all').classList.remove('open');
+  triggerMapPrint(null);
+});
+
+$('btn-print-day').addEventListener('click', () => {
+  if (!mapReady) { setStatus('Karte nicht geladen.', 'error'); return; }
+  if (!computedDays.length) { setStatus('Zuerst Route berechnen.', 'error'); return; }
+  $('day-print-list').innerHTML = computedDays.map(cd =>
+    '<button class="day-print-btn" data-print-day="' + cd.dayIndex + '">' +
+    '<div class="day-print-dot" style="background:' + cd.color + '"></div>' +
+    esc(cd.label) + '</button>'
+  ).join('');
+  $('modal-print-day').classList.add('open');
+});
+$('btn-cancel-print-day').addEventListener('click', () => $('modal-print-day').classList.remove('open'));
+$('day-print-list').addEventListener('click', e => {
+  const btn = e.target.closest('[data-print-day]');
+  if (!btn) return;
+  $('modal-print-day').classList.remove('open');
+  const di = parseInt(btn.dataset.printDay);
+  const cd = computedDays.find(d => d.dayIndex === di);
+  if (cd) triggerMapPrint(cd);
+});
+
+function triggerMapPrint(cd) {
+  const mapEl = $('map');
+  if (!mapEl) return;
+  if (cd && mapReady) {
+    try { map.fitBounds(cd.bounds, { padding: [50, 50] }); } catch {}
+    setTimeout(() => {
+      mapEl.id = 'print-target';
+      setTimeout(() => { window.print(); setTimeout(() => { mapEl.id = 'map'; }, 700); }, 500);
+    }, 700);
+  } else {
+    mapEl.id = 'print-target';
+    setTimeout(() => { window.print(); setTimeout(() => { mapEl.id = 'map'; }, 700); }, 150);
+  }
+}
+
+/* ============================================================
+   DIVIDER (resize map/table)
+   ============================================================ */
+(function initDivider() {
+  const divider = $('divider');
+  const mapEl = $('map');
+  const tableEl = $('table-pane');
+  const mainEl = $('main');
+  const statusEl = $('statusbar');
+  if (!divider || !mapEl || !tableEl || !mainEl || !statusEl) return;
+
+  let isDragging = false, startY = 0, startMapH = 0;
+
+  function getAvailable() {
+    return mainEl.getBoundingClientRect().height - divider.offsetHeight - statusEl.offsetHeight;
+  }
+  function setHeights(mapH) {
+    const avail = getAvailable();
+    const clamped = Math.max(80, Math.min(mapH, avail - 60));
+    mapEl.style.height = clamped + 'px';
+    tableEl.style.height = (avail - clamped) + 'px';
+    if (mapReady && map) map.invalidateSize();
+  }
+  function init() { setHeights(Math.round(getAvailable() * 0.55)); }
+  setTimeout(init, 100);
+  window.addEventListener('resize', init);
+
+  divider.addEventListener('mousedown', e => {
+    e.preventDefault();
+    isDragging = true;
+    startY = e.clientY;
+    startMapH = mapEl.getBoundingClientRect().height;
+    divider.classList.add('active');
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  });
+  document.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    setHeights(startMapH + (e.clientY - startY));
+  });
+  document.addEventListener('mouseup', () => {
+    if (!isDragging) return;
+    isDragging = false;
+    divider.classList.remove('active');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    if (mapReady && map) map.invalidateSize();
+  });
+
+  divider.addEventListener('touchstart', e => {
+    isDragging = true;
+    startY = e.touches[0].clientY;
+    startMapH = mapEl.getBoundingClientRect().height;
+  }, { passive: true });
+  document.addEventListener('touchmove', e => {
+    if (!isDragging) return;
+    setHeights(startMapH + (e.touches[0].clientY - startY));
+  }, { passive: true });
+  document.addEventListener('touchend', () => {
+    isDragging = false;
+    if (mapReady && map) map.invalidateSize();
+  });
+})();
+
+/* ============================================================
+   LOG MODAL HANDLERS
+   ============================================================ */
+$('btn-show-log').addEventListener('click', () => {
+  renderLog();
+  $('modal-log').classList.add('open');
+});
+$('btn-close-log').addEventListener('click', () => $('modal-log').classList.remove('open'));
+$('btn-clear-log').addEventListener('click', () => {
+  if (confirm('Log wirklich löschen?')) {
+    clearLog();
+    renderLog();
+  }
+});
+$('btn-copy-log').addEventListener('click', async () => {
+  const text = getLogAsText();
+  try {
+    await navigator.clipboard.writeText(text);
+    addLog('Log in Zwischenablage kopiert', 'success');
+    renderLog();
+  } catch (err) {
+    // Fallback: download as text file
+    const blob = new Blob([text], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.download = 'reiseplaner_log.txt';
+    a.href = URL.createObjectURL(blob);
+    a.click();
+  }
+});
+
+/* ============================================================
+   GLOBAL ERROR HANDLER (catches all uncaught errors)
+   ============================================================ */
+window.addEventListener('error', e => {
+  addLog('JS-FEHLER: ' + e.message + ' (' + (e.filename || '?') + ':' + (e.lineno || '?') + ')', 'error');
+});
+window.addEventListener('unhandledrejection', e => {
+  addLog('Promise-FEHLER: ' + (e.reason && e.reason.message ? e.reason.message : e.reason), 'error');
+});
+
+/* ============================================================
+   STARTUP
+   ============================================================ */
+loadFromStorage();
+renderTripList();
+initMap();
+
+addLog('Reiseplaner gestartet');
+addLog('Protokoll: ' + window.location.protocol);
+addLog('Leaflet: ' + (checkLeaflet() ? 'geladen' : 'NICHT geladen'), checkLeaflet() ? 'success' : 'warn');
+addLog('html2canvas: ' + (checkHtml2Canvas() ? 'geladen' : 'NICHT geladen'), checkHtml2Canvas() ? 'success' : 'warn');
+addLog('JSZip: ' + (checkJSZip() ? 'geladen' : 'NICHT geladen'), checkJSZip() ? 'success' : 'warn');
+addLog(trips.length + ' Reise(n) im Speicher');
+
+if (!checkLeaflet()) {
+  setStatus('⚠️ Karte nicht verfügbar (Internet prüfen). App funktioniert trotzdem.', 'error');
+} else {
+  setStatus('Bereit.');
+}
+
+/* ============================================================
+   PWA: SERVICE WORKER REGISTRATION
+   ============================================================ */
+if ('serviceWorker' in navigator) {
+  // Service Worker nur registrieren wenn die Seite über http(s) geladen wird,
+  // nicht bei file:// (lokales Doppelklicken).
+  if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js')
+        .then(reg => addLog('Service Worker registriert (PWA aktiv)', 'success'))
+        .catch(err => addLog('Service Worker konnte nicht registriert werden: ' + err.message, 'warn'));
+    });
+  } else {
+    addLog('Service Worker übersprungen (file:// Modus)', 'info');
+  }
+}
+</script>
+</body>
+</html>
