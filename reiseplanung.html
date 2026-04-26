@@ -692,7 +692,158 @@ header h1 { font-size: 1.15rem; font-weight: 500; }
     z-index: 99999 !important;
     background: #fff !important;
   }
+
+  /* Multi-page report container */
+  #report-target { display: block !important; }
+  #report-target, #report-target * { visibility: visible !important; }
+  #report-target {
+    position: absolute !important;
+    left: 0 !important; top: 0 !important;
+    width: 100% !important;
+    background: #fff !important;
+    z-index: 99999 !important;
+  }
+  .report-page {
+    page-break-after: always;
+    break-after: page;
+    padding: 14mm 12mm;
+    box-sizing: border-box;
+    min-height: 100vh;
+  }
+  .report-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+  /* Hide page-break inside elements where possible */
+  .report-section { page-break-inside: avoid; break-inside: avoid; }
 }
+
+/* Off-screen container during normal display so the user does not see it */
+#report-target, #all-maps-target {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 210mm;     /* A4 width */
+  background: #fff;
+  pointer-events: none;
+}
+
+/* Report typography (used by both screen rendering and print) */
+.report-page {
+  padding: 14mm 12mm;
+  font-family: 'Segoe UI', Arial, sans-serif;
+  color: #1b2b1e;
+  box-sizing: border-box;
+}
+.report-cover {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  min-height: 250mm;
+  background: linear-gradient(180deg, #2d6a4f 0%, #52b788 100%);
+  color: #fff;
+  padding: 20mm;
+}
+.report-cover .emoji-big   { font-size: 70px; margin-bottom: 12px; }
+.report-cover h1           { font-size: 28pt; margin-bottom: 14px; font-weight: 600; }
+.report-cover .meta        { font-size: 11pt; opacity: 0.9; margin-bottom: 26px; }
+.report-cover .stats       {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  width: 100%;
+  max-width: 360px;
+  margin-top: 18px;
+}
+.report-cover .stat-box    {
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 9px;
+  padding: 10px 14px;
+  text-align: center;
+}
+.report-cover .stat-label  { font-size: 8.5pt; opacity: 0.85; text-transform: uppercase; letter-spacing: 1px; }
+.report-cover .stat-value  { font-size: 16pt; font-weight: 700; margin-top: 4px; }
+
+.report-day-header {
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 2px solid #2d6a4f;
+  padding-bottom: 6px;
+  margin-bottom: 14px;
+}
+.report-day-header .dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
+.report-day-header h2 { font-size: 16pt; font-weight: 600; flex: 1; }
+.report-day-header .meta-right { font-size: 10pt; color: #4a6357; }
+
+.report-map-box {
+  width: 100%;
+  height: 95mm;
+  border: 1px solid #cfe3d4;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  background: #e8f2e8;
+}
+
+.report-section { margin-bottom: 14px; }
+.report-section-title {
+  font-size: 9.5pt;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #8aab97;
+  margin-bottom: 5px;
+  font-weight: 700;
+}
+
+table.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9.5pt;
+}
+table.report-table th, table.report-table td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid #cfe3d4;
+}
+table.report-table th {
+  background: #f0ede6;
+  font-size: 8pt;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #4a6357;
+}
+table.report-table .num { text-align: right; }
+table.report-table tfoot td {
+  font-weight: 700;
+  background: #e4f2ea;
+  color: #2d6a4f;
+}
+.report-hotel-row td { background: #fffdf0; color: #8a6800; }
+.report-exp-row td   { background: #f4f8ff; color: #1a4a7a; }
+
+.report-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+.report-summary-cell {
+  background: #f0ede6;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 10pt;
+}
+.report-summary-cell .label { font-size: 8.5pt; color: #4a6357; }
+.report-summary-cell .value { font-size: 12pt; font-weight: 700; color: #2d6a4f; margin-top: 2px; }
+.report-summary-cell.gold .value { color: #8a6800; }
+.report-summary-cell.red  .value { color: #b03010; }
+.report-summary-cell.total {
+  grid-column: span 2;
+  background: #e4f2ea;
+}
+.report-summary-cell.total .value { font-size: 18pt; }
+
 </style>
 </head>
 
@@ -737,15 +888,17 @@ header h1 { font-size: 1.15rem; font-weight: 500; }
     <div class="panel" id="panel-export" style="display:none">
       <div class="panel-title">Exportieren</div>
       <div style="display:flex;flex-direction:column;gap:6px">
+        <button class="btn solid" id="btn-full-report">📄 Reisebericht als PDF</button>
         <button class="btn blue" id="btn-print-all">🗺️ Gesamtkarte drucken</button>
-        <button class="btn blue" id="btn-print-day">📅 Tageskarte drucken</button>
+        <button class="btn blue" id="btn-print-day">📅 Einzelne Tageskarte drucken</button>
+        <button class="btn blue" id="btn-print-all-days">🗺️ Alle Tageskarten drucken</button>
         <button class="btn blue" id="btn-export-route-img">📋 Route als Bild</button>
         <button class="btn blue" id="btn-export-budget-img">💰 Budget als Bild</button>
         <button class="btn green-outline" id="btn-export-json">💾 Reise exportieren</button>
         <button class="btn purple" id="btn-export-zip">⬇️ Alle Dateien als ZIP</button>
       </div>
       <div style="margin-top:6px;font-size:0.67rem;color:var(--text-faint);line-height:1.5">
-        Karte drucken: Im Druckdialog «Als PDF» wählen, Querformat, Ränder «Keine».
+        Im Druckdialog «Als PDF speichern» wählen.
       </div>
     </div>
   </aside>
@@ -790,6 +943,11 @@ header h1 { font-size: 1.15rem; font-weight: 500; }
     </div>
   </div>
 </div>
+
+<!-- ═══════════════════════════════ PRINT CONTAINERS ═══════════════════════════════ -->
+<!-- These are off-screen during normal use. Filled and made visible only when printing. -->
+<div id="report-target" aria-hidden="true"></div>
+<div id="all-maps-target" aria-hidden="true"></div>
 
 <!-- ═══════════════════════════════ MODALS ═══════════════════════════════ -->
 
@@ -2371,6 +2529,370 @@ function triggerMapPrint(cd) {
     setTimeout(() => { window.print(); setTimeout(() => { mapEl.id = 'map'; }, 700); }, 150);
   }
 }
+
+
+/* ============================================================
+   FULL REPORT PDF
+   Builds a multi-page printable document with cover, main map,
+   per-day sections (mini-map + table + hotel + expenses), and
+   a final budget summary. The user prints to PDF via browser dialog.
+   ============================================================ */
+
+/**
+ * Render a small Leaflet map into a given container, fit the route bounds,
+ * and resolve once the tiles have had a chance to render.
+ */
+async function renderMiniMap(container, computedDay, allBounds) {
+  if (!checkLeaflet()) return;
+  const miniMap = L.map(container, {
+    zoomControl: false,
+    attributionControl: false,
+    dragging: false,
+    scrollWheelZoom: false,
+    doubleClickZoom: false,
+    boxZoom: false,
+    keyboard: false,
+    tap: false,
+  });
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    subdomains: 'abcd',
+    maxZoom: 18,
+  }).addTo(miniMap);
+
+  const segLayer = L.layerGroup().addTo(miniMap);
+
+  if (computedDay) {
+    // Single day map: draw only that day's segments
+    computedDay.segments.forEach(seg => {
+      // We don't have raw points for segments here; redraw from bounds
+    });
+    // Draw markers for that day
+    computedDay.bounds.forEach((latlon, i) => {
+      const icon = L.divIcon({
+        className: '',
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+        html: '<div style="background:' + computedDay.color +
+          ';color:#fff;border-radius:50%;width:22px;height:22px;display:flex;' +
+          'align-items:center;justify-content:center;font-size:10px;font-weight:700;' +
+          'border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);">' + (i+1) + '</div>'
+      });
+      L.marker(latlon, { icon }).addTo(segLayer);
+    });
+    // Connect with a polyline
+    if (computedDay.bounds.length >= 2) {
+      L.polyline(computedDay.bounds, { color: computedDay.color, weight: 4, opacity: 0.85 })
+        .addTo(segLayer);
+    }
+    miniMap.fitBounds(computedDay.bounds, { padding: [20, 20] });
+  } else if (allBounds && allBounds.length) {
+    // Overview map: draw all days, each in its own colour
+    let globalIdx = 0;
+    computedDays.forEach(cd => {
+      if (cd.bounds.length >= 2) {
+        L.polyline(cd.bounds, { color: cd.color, weight: 3.5, opacity: 0.85 })
+          .addTo(segLayer);
+      }
+      cd.bounds.forEach(latlon => {
+        globalIdx++;
+        const isFirst = globalIdx === 1;
+        const col = isFirst ? '#2d6a4f' : cd.color;
+        const icon = L.divIcon({
+          className: '',
+          iconSize: [20, 20],
+          iconAnchor: [10, 10],
+          html: '<div style="background:' + col +
+            ';color:#fff;border-radius:50%;width:20px;height:20px;display:flex;' +
+            'align-items:center;justify-content:center;font-size:9px;font-weight:700;' +
+            'border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);">' + globalIdx + '</div>'
+        });
+        L.marker(latlon, { icon }).addTo(segLayer);
+      });
+    });
+    miniMap.fitBounds(allBounds, { padding: [20, 20] });
+  }
+
+  // Wait for tiles to load
+  await new Promise(resolve => setTimeout(resolve, 1200));
+  return miniMap;
+}
+
+/** Build the cover page HTML */
+function buildReportCover() {
+  if (!activeTrip) return '';
+  const c = getCurrency();
+  const totalDays = activeTrip.days.length;
+  const totalDist = computedDays.reduce((s, d) => s + d.totalDist, 0);
+  const totalTime = computedDays.reduce((s, d) => s + d.totalTime, 0);
+  const totalPlaces = computedDays.reduce((s, d) => s + d.bounds.length, 0);
+  const grandTotal = calcGrandTotal();
+
+  return '<div class="report-page report-cover">' +
+    '<div class="emoji-big">' + esc(activeTrip.emoji) + '</div>' +
+    '<h1>' + esc(activeTrip.name) + '</h1>' +
+    '<div class="meta">Reisebericht · erstellt am ' +
+      new Date().toLocaleDateString('de-CH', { day: '2-digit', month: 'long', year: 'numeric' }) +
+    '</div>' +
+    '<div class="stats">' +
+      '<div class="stat-box"><div class="stat-label">Tage</div><div class="stat-value">' + totalDays + '</div></div>' +
+      '<div class="stat-box"><div class="stat-label">Orte</div><div class="stat-value">' + totalPlaces + '</div></div>' +
+      '<div class="stat-box"><div class="stat-label">Distanz</div><div class="stat-value">' + formatDist(totalDist) + '</div></div>' +
+      '<div class="stat-box"><div class="stat-label">Reisezeit</div><div class="stat-value">' + formatTime(totalTime) + '</div></div>' +
+      (grandTotal > 0
+        ? '<div class="stat-box" style="grid-column:span 2"><div class="stat-label">Gesamtkosten</div><div class="stat-value">' + formatPrice(grandTotal) + ' ' + esc(c) + '</div></div>'
+        : '') +
+    '</div></div>';
+}
+
+/** Build the overview-map page HTML (page 2) */
+function buildReportOverviewPage() {
+  return '<div class="report-page">' +
+    '<div class="report-day-header">' +
+      '<div class="dot" style="background:#2d6a4f"></div>' +
+      '<h2>🗺️ Übersichtskarte</h2>' +
+      '<div class="meta-right">Alle Tage</div>' +
+    '</div>' +
+    '<div class="report-map-box" id="report-map-overview" style="height:170mm"></div>' +
+    '</div>';
+}
+
+/** Build a per-day page */
+function buildReportDayPage(cd, dayIdx) {
+  const c = getCurrency();
+  const day = activeTrip.days[cd.dayIndex];
+
+  // Route table for this day
+  let routeRows = cd.segments.map((seg, si) => {
+    const price = getSegPrice(cd.dayIndex, si);
+    return '<tr>' +
+      '<td>' + (si + 1) + '</td>' +
+      '<td>' + esc(seg.from) + '</td>' +
+      '<td>→</td>' +
+      '<td>' + esc(seg.to) + '</td>' +
+      '<td class="num">' + formatDist(seg.dist) + '</td>' +
+      '<td class="num">' + formatTime(seg.dur) + '</td>' +
+      '<td>' + seg.mode.label + '</td>' +
+      '<td class="num">' + (parseFloat(price) > 0 ? formatPrice(price) + ' ' + c : '–') + '</td>' +
+      '</tr>';
+  }).join('');
+
+  const dayTransport = cd.segments.reduce((s, seg, si) => {
+    const p = parseFloat(getSegPrice(cd.dayIndex, si));
+    return s + (isNaN(p) ? 0 : p);
+  }, 0);
+
+  // Hotel + expenses
+  const hotel = day.hotel || {};
+  const expenses = day.expenses || [];
+  const hasHotel = hotel.name || parseFloat(hotel.pricePerNight) > 0;
+  const validExpenses = expenses.filter(e => e.description || parseFloat(e.amount) > 0);
+
+  let extraRows = '';
+  if (hasHotel) {
+    const total = parseFloat(hotel.pricePerNight || 0) * parseFloat(hotel.nights || 1);
+    const nightsNote = parseFloat(hotel.nights) > 1 ? ' (' + hotel.nights + ' Nächte)' : '';
+    extraRows += '<tr class="report-hotel-row">' +
+      '<td colspan="7">🏨 ' + esc(hotel.name || 'Hotel') + nightsNote + '</td>' +
+      '<td class="num">' + (total > 0 ? formatPrice(total) + ' ' + c : '') + '</td></tr>';
+  }
+  validExpenses.forEach(ex => {
+    extraRows += '<tr class="report-exp-row">' +
+      '<td colspan="7">' + esc(getCatLabel(ex.category)) +
+        (ex.description ? ' · ' + esc(ex.description) : '') + '</td>' +
+      '<td class="num">' + (parseFloat(ex.amount) > 0 ? formatPrice(ex.amount) + ' ' + c : '') + '</td></tr>';
+  });
+
+  const dayTotal = dayTransport
+    + (hasHotel ? parseFloat(hotel.pricePerNight || 0) * parseFloat(hotel.nights || 1) : 0)
+    + validExpenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+
+  return '<div class="report-page">' +
+    '<div class="report-day-header">' +
+      '<div class="dot" style="background:' + cd.color + '"></div>' +
+      '<h2>' + esc(cd.label) + '</h2>' +
+      '<div class="meta-right">' + formatDist(cd.totalDist) + ' · ' + formatTime(cd.totalTime) + '</div>' +
+    '</div>' +
+    '<div class="report-section">' +
+      '<div class="report-map-box" id="report-map-day-' + cd.dayIndex + '"></div>' +
+    '</div>' +
+    '<div class="report-section">' +
+      '<div class="report-section-title">🛣️ Etappen</div>' +
+      '<table class="report-table">' +
+        '<thead><tr><th>#</th><th>Von</th><th></th><th>Nach</th>' +
+        '<th class="num">Distanz</th><th class="num">Zeit</th><th>Transport</th>' +
+        '<th class="num">Kosten</th></tr></thead>' +
+        '<tbody>' + routeRows + extraRows + '</tbody>' +
+        (dayTotal > 0
+          ? '<tfoot><tr><td colspan="7" class="num">Tagestotal</td><td class="num">' +
+            formatPrice(dayTotal) + ' ' + c + '</td></tr></tfoot>'
+          : '') +
+      '</table>' +
+    '</div>' +
+    '</div>';
+}
+
+/** Build the budget summary page (last page) */
+function buildReportBudgetPage() {
+  const c = getCurrency();
+  const tt = calcTransportTotal();
+  const ht = calcHotelTotal();
+  const et = calcExpensesTotal();
+  const gt = tt + ht + et;
+  if (gt === 0) return ''; // skip if no costs entered
+
+  return '<div class="report-page">' +
+    '<div class="report-day-header">' +
+      '<div class="dot" style="background:#8a6800"></div>' +
+      '<h2>💰 Kosten & Budget</h2>' +
+    '</div>' +
+    '<div class="report-summary-grid">' +
+      '<div class="report-summary-cell">' +
+        '<div class="label">🚗 Transportkosten</div>' +
+        '<div class="value">' + (tt > 0 ? formatPrice(tt) + ' ' + c : '–') + '</div>' +
+      '</div>' +
+      '<div class="report-summary-cell gold">' +
+        '<div class="label">🏨 Unterkunft</div>' +
+        '<div class="value">' + (ht > 0 ? formatPrice(ht) + ' ' + c : '–') + '</div>' +
+      '</div>' +
+      '<div class="report-summary-cell red">' +
+        '<div class="label">💸 Weitere Ausgaben</div>' +
+        '<div class="value">' + (et > 0 ? formatPrice(et) + ' ' + c : '–') + '</div>' +
+      '</div>' +
+      '<div class="report-summary-cell" style="background:#f4f1eb">' +
+        '<div class="label">Anzahl Tage</div>' +
+        '<div class="value" style="color:#1b2b1e">' + activeTrip.days.length + '</div>' +
+      '</div>' +
+      '<div class="report-summary-cell total">' +
+        '<div class="label">💰 Gesamtkosten</div>' +
+        '<div class="value">' + formatPrice(gt) + ' ' + c + '</div>' +
+      '</div>' +
+    '</div></div>';
+}
+
+/** Main: build and print the full report */
+$('btn-full-report').addEventListener('click', async () => {
+  if (!activeTrip) { setStatus('Keine Reise ausgewählt.', 'error'); return; }
+  if (!computedDays.length) {
+    setStatus('Zuerst auf «Berechnen» klicken.', 'error');
+    return;
+  }
+  if (!checkLeaflet()) {
+    setStatus('Karten nicht verfügbar – Internet prüfen.', 'error');
+    return;
+  }
+
+  setStatus('Erstelle Reisebericht…');
+  if (window.matchMedia('(max-width: 800px)').matches) closeSidebar();
+
+  const target = $('report-target');
+  // Build the HTML
+  let html = buildReportCover();
+  // Aggregate bounds for overview
+  const allBounds = [];
+  computedDays.forEach(cd => cd.bounds.forEach(b => allBounds.push(b)));
+  if (allBounds.length) html += buildReportOverviewPage();
+  computedDays.forEach((cd, i) => { html += buildReportDayPage(cd, i); });
+  html += buildReportBudgetPage();
+  target.innerHTML = html;
+
+  // Move target to visible position so Leaflet can compute sizes
+  target.style.left = '0';
+  target.style.zIndex = '-1';
+  target.style.opacity = '0';
+  target.style.pointerEvents = 'none';
+
+  try {
+    // Render the overview map
+    const overviewEl = document.getElementById('report-map-overview');
+    if (overviewEl && allBounds.length) {
+      await renderMiniMap(overviewEl, null, allBounds);
+    }
+    // Render each day map
+    for (const cd of computedDays) {
+      const el = document.getElementById('report-map-day-' + cd.dayIndex);
+      if (el) await renderMiniMap(el, cd, null);
+    }
+
+    // All maps rendered. Switch to print mode.
+    target.id = 'print-target';
+    target.style.opacity = '1';
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => {
+        target.id = 'report-target';
+        target.style.left = '-10000px';
+        target.style.opacity = '';
+        target.innerHTML = '';
+        setStatus('Reisebericht fertig.', 'success');
+      }, 1000);
+    }, 400);
+  } catch (err) {
+    setStatus('Fehler beim Bericht: ' + err.message, 'error');
+    target.innerHTML = '';
+    target.style.left = '-10000px';
+  }
+});
+
+
+/* ============================================================
+   ALLE TAGESKARTEN GLEICHZEITIG DRUCKEN
+   Each day's map gets its own page in the print output.
+   ============================================================ */
+$('btn-print-all-days').addEventListener('click', async () => {
+  if (!computedDays.length) {
+    setStatus('Zuerst auf «Berechnen» klicken.', 'error');
+    return;
+  }
+  if (!checkLeaflet()) {
+    setStatus('Karten nicht verfügbar – Internet prüfen.', 'error');
+    return;
+  }
+
+  setStatus('Bereite ' + computedDays.length + ' Tageskarten vor…');
+  if (window.matchMedia('(max-width: 800px)').matches) closeSidebar();
+
+  const target = $('all-maps-target');
+  // Build a page per day
+  let html = '';
+  computedDays.forEach(cd => {
+    html += '<div class="report-page">' +
+      '<div class="report-day-header">' +
+        '<div class="dot" style="background:' + cd.color + '"></div>' +
+        '<h2>' + esc(cd.label) + '</h2>' +
+        '<div class="meta-right">' + formatDist(cd.totalDist) + ' · ' + formatTime(cd.totalTime) + '</div>' +
+      '</div>' +
+      '<div class="report-map-box" id="all-map-day-' + cd.dayIndex + '" style="height:230mm"></div>' +
+      '</div>';
+  });
+  target.innerHTML = html;
+  target.style.left = '0';
+  target.style.opacity = '0';
+
+  try {
+    for (const cd of computedDays) {
+      const el = document.getElementById('all-map-day-' + cd.dayIndex);
+      if (el) await renderMiniMap(el, cd, null);
+    }
+
+    target.id = 'print-target';
+    target.style.opacity = '1';
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => {
+        target.id = 'all-maps-target';
+        target.style.left = '-10000px';
+        target.style.opacity = '';
+        target.innerHTML = '';
+        setStatus(computedDays.length + ' Tageskarten gedruckt.', 'success');
+      }, 1000);
+    }, 400);
+  } catch (err) {
+    setStatus('Fehler: ' + err.message, 'error');
+    target.innerHTML = '';
+    target.style.left = '-10000px';
+  }
+});
+
 
 /* ============================================================
    DIVIDER (resize map/table)
