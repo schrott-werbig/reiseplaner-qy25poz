@@ -68,6 +68,8 @@ header {
   padding: 0 20px;
   box-shadow: var(--shadow);
   flex-shrink: 0;
+  position: relative;
+  z-index: 1000;        /* above sidebar (900) and backdrop (800) */
 }
 header h1 { font-size: 1.15rem; font-weight: 500; }
 
@@ -586,6 +588,97 @@ header h1 { font-size: 1.15rem; font-weight: 500; }
 .day-print-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 
 /* ============================================================
+   MOBILE: BURGER + DRAWER
+   ============================================================ */
+
+/* Burger button: hidden on desktop, visible on small screens */
+#btn-toggle-sidebar {
+  display: none;
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 1.4rem;
+  padding: 0 6px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+/* Backdrop overlay (only used on mobile) */
+#sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 800;
+  opacity: 0;
+  transition: opacity 0.25s;
+  pointer-events: none;
+}
+
+/* Mobile breakpoint: under 800px treat as small screen */
+@media (max-width: 800px) {
+  /* Show the burger */
+  #btn-toggle-sidebar { display: inline-block; }
+
+  /* Sidebar becomes a slide-in drawer */
+  #sidebar {
+    position: fixed;
+    top: 48px;                    /* below the header */
+    left: 0;
+    bottom: 0;
+    width: 86vw;
+    max-width: 360px;
+    transform: translateX(-100%); /* hidden off-screen */
+    transition: transform 0.28s ease-out;
+    z-index: 900;
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.25);
+  }
+
+  /* Open state */
+  body.sidebar-open #sidebar {
+    transform: translateX(0);
+  }
+  body.sidebar-open #sidebar-backdrop {
+    display: block;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Main content takes full width when sidebar is closed */
+  #main { width: 100%; }
+
+  /* Slightly larger touch targets */
+  .btn        { padding: 8px 13px; font-size: 0.84rem; }
+  .btn.small  { padding: 5px 9px; font-size: 0.74rem; }
+
+  /* Mode buttons easier to tap */
+  .seg-mode-btn { padding: 5px 8px; font-size: 0.72rem; }
+
+  /* Place number a bit larger */
+  .place-num    { width: 22px; height: 22px; font-size: 0.66rem; }
+
+  /* Inputs a bit taller for easier tapping */
+  .place-input  { padding: 7px 8px; font-size: 0.85rem; }
+  .day-name-input { font-size: 0.85rem; padding: 4px 0; }
+
+  /* Map legend smaller on tiny screens */
+  #map-legend { max-width: 160px; font-size: 0.65rem; padding: 5px 8px; }
+
+  /* Modals fit tight on small screens */
+  .modal-box { padding: 18px 16px 14px; min-width: auto; width: 92vw !important; }
+  .guide-box { padding: 16px; width: 92vw !important; }
+
+  /* Status bar: hide log button text on tiny screens (still tappable) */
+  #statusbar { font-size: 0.7rem; }
+}
+
+/* Very narrow screens: smaller header */
+@media (max-width: 380px) {
+  header { padding: 0 12px; gap: 6px; }
+  header h1 { font-size: 1rem; }
+}
+
+/* ============================================================
    PRINT
    ============================================================ */
 @media print {
@@ -606,9 +699,12 @@ header h1 { font-size: 1.15rem; font-weight: 500; }
 <body>
 
 <header>
+  <button id="btn-toggle-sidebar" aria-label="Menü öffnen" title="Menü">☰</button>
   <span>🗺️</span>
   <h1>Reiseplaner</h1>
 </header>
+
+<div id="sidebar-backdrop"></div>
 
 <div id="app">
 
@@ -2381,6 +2477,40 @@ window.addEventListener('unhandledrejection', e => {
 });
 
 /* ============================================================
+   MOBILE SIDEBAR DRAWER
+   On small screens, the sidebar is a slide-in drawer.
+   Burger button toggles it. Tapping the backdrop closes it.
+   On desktop these handlers do nothing visible.
+   ============================================================ */
+function openSidebar()  { document.body.classList.add('sidebar-open'); }
+function closeSidebar() { document.body.classList.remove('sidebar-open'); }
+function toggleSidebar(){ document.body.classList.toggle('sidebar-open'); }
+
+$('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
+$('sidebar-backdrop').addEventListener('click', closeSidebar);
+
+// Auto-close when a trip is selected (so user lands on the map)
+// We hook into the existing trip-list click handler via capturing.
+document.getElementById('trip-list').addEventListener('click', e => {
+  if (e.target.closest('.trip-item') && !e.target.dataset.deleteTrip) {
+    // Only close on small screens; on desktop sidebar is always open
+    if (window.matchMedia('(max-width: 800px)').matches) closeSidebar();
+  }
+});
+
+// Auto-close when the user calculates a route (so they see the map)
+$('btn-calculate').addEventListener('click', () => {
+  if (window.matchMedia('(max-width: 800px)').matches) closeSidebar();
+});
+
+// Close on Escape key (accessibility)
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.body.classList.contains('sidebar-open')) {
+    closeSidebar();
+  }
+});
+
+/* ============================================================
    STARTUP
    ============================================================ */
 loadFromStorage();
@@ -2393,6 +2523,12 @@ addLog('Leaflet: ' + (checkLeaflet() ? 'geladen' : 'NICHT geladen'), checkLeafle
 addLog('html2canvas: ' + (checkHtml2Canvas() ? 'geladen' : 'NICHT geladen'), checkHtml2Canvas() ? 'success' : 'warn');
 addLog('JSZip: ' + (checkJSZip() ? 'geladen' : 'NICHT geladen'), checkJSZip() ? 'success' : 'warn');
 addLog(trips.length + ' Reise(n) im Speicher');
+
+// On mobile, open the sidebar by default if there are no trips yet
+// (so first-time users see where to start).
+if (!trips.length && window.matchMedia('(max-width: 800px)').matches) {
+  openSidebar();
+}
 
 if (!checkLeaflet()) {
   setStatus('⚠️ Karte nicht verfügbar (Internet prüfen). App funktioniert trotzdem.', 'error');
