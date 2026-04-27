@@ -681,10 +681,13 @@ header h1 { font-size: 1.15rem; font-weight: 500; }
 /* ============================================================
    PRINT
    ============================================================ */
+
+/* Standard print mode (single-element fixed view: map prints) */
 @media print {
-  body * { visibility: hidden; }
-  #print-target, #print-target * { visibility: visible; }
-  #print-target {
+  body.printing-element * { visibility: hidden; }
+  body.printing-element #print-target,
+  body.printing-element #print-target * { visibility: visible; }
+  body.printing-element #print-target {
     position: fixed !important;
     inset: 0 !important;
     width: 100vw !important;
@@ -692,30 +695,125 @@ header h1 { font-size: 1.15rem; font-weight: 500; }
     z-index: 99999 !important;
     background: #fff !important;
   }
+}
 
-  /* Multi-page report container */
-  #report-target { display: block !important; }
-  #report-target, #report-target * { visibility: visible !important; }
-  #report-target {
-    position: absolute !important;
-    left: 0 !important; top: 0 !important;
+/* Multi-page report mode (cover, day pages, budget) */
+@media print {
+  body.printing-report,
+  body.printing-report html { overflow: visible !important; height: auto !important; }
+  body.printing-report > * { visibility: hidden; }
+  body.printing-report #report-target,
+  body.printing-report #report-target * { visibility: visible !important; }
+  body.printing-report #report-target {
+    position: static !important;
+    left: auto !important; top: auto !important;
     width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
     background: #fff !important;
-    z-index: 99999 !important;
+    pointer-events: auto !important;
+    z-index: auto !important;
+    display: block !important;
   }
-  .report-page {
+  body.printing-report #app,
+  body.printing-report header,
+  body.printing-report #all-maps-target,
+  body.printing-report .modal-overlay,
+  body.printing-report #sidebar-backdrop {
+    display: none !important;
+  }
+  body.printing-report .report-page {
     page-break-after: always;
     break-after: page;
+    page-break-inside: avoid;
+    break-inside: avoid;
     padding: 14mm 12mm;
     box-sizing: border-box;
-    min-height: 100vh;
+    min-height: auto;
+    display: block;
   }
-  .report-page:last-child {
+  body.printing-report .report-page:last-child {
     page-break-after: auto;
     break-after: auto;
   }
-  /* Hide page-break inside elements where possible */
-  .report-section { page-break-inside: avoid; break-inside: avoid; }
+  body.printing-report .report-page.report-cover {
+    padding: 0 !important;
+    height: 200mm !important;       /* well under A4 minus default margins (~277mm) */
+    min-height: 0 !important;
+    max-height: 200mm !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    overflow: hidden !important;
+    display: flex !important;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    page-break-after: always;
+    break-after: page;
+  }
+
+  /* Tighter spacing inside printed pages so day content fits on 1 page */
+  body.printing-report .report-page .report-map-box {
+    height: 75mm;
+    margin-bottom: 6px;
+  }
+  body.printing-report .report-page .report-day-header {
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+  }
+  body.printing-report .report-page .report-section {
+    margin-bottom: 8px;
+  }
+  /* Overview page: bigger map since it has no other content */
+  body.printing-report .report-page #report-map-overview {
+    height: 145mm;
+  }
+  body.printing-report .report-section {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* Set page size to A4 */
+  @page { size: A4; margin: 0; }
+}
+
+/* Same rules for "all maps" multi-page mode */
+@media print {
+  body.printing-all-maps,
+  body.printing-all-maps html { overflow: visible !important; height: auto !important; }
+  body.printing-all-maps > * { visibility: hidden; }
+  body.printing-all-maps #all-maps-target,
+  body.printing-all-maps #all-maps-target * { visibility: visible !important; }
+  body.printing-all-maps #all-maps-target {
+    position: static !important;
+    left: auto !important; top: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+    pointer-events: auto !important;
+    z-index: auto !important;
+    display: block !important;
+  }
+  body.printing-all-maps #app,
+  body.printing-all-maps header,
+  body.printing-all-maps #report-target,
+  body.printing-all-maps .modal-overlay,
+  body.printing-all-maps #sidebar-backdrop {
+    display: none !important;
+  }
+  body.printing-all-maps .report-page {
+    page-break-after: always;
+    break-after: page;
+    padding: 12mm 10mm;
+    box-sizing: border-box;
+    min-height: auto;
+  }
+  body.printing-all-maps .report-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+  @page { size: A4 landscape; margin: 0; }
 }
 
 /* Off-screen container during normal display so the user does not see it */
@@ -741,10 +839,12 @@ header h1 { font-size: 1.15rem; font-weight: 500; }
   justify-content: center;
   align-items: center;
   text-align: center;
-  min-height: 250mm;
+  min-height: 230mm;
   background: linear-gradient(180deg, #2d6a4f 0%, #52b788 100%);
   color: #fff;
-  padding: 20mm;
+  padding: 15mm;
+  margin: -14mm -12mm;     /* extend gradient to page edges */
+  box-sizing: border-box;
 }
 .report-cover .emoji-big   { font-size: 70px; margin-bottom: 12px; }
 .report-cover h1           { font-size: 28pt; margin-bottom: 14px; font-weight: 600; }
@@ -779,10 +879,10 @@ header h1 { font-size: 1.15rem; font-weight: 500; }
 
 .report-map-box {
   width: 100%;
-  height: 95mm;
+  height: 80mm;
   border: 1px solid #cfe3d4;
   border-radius: 6px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   background: #e8f2e8;
 }
 
@@ -2521,12 +2621,28 @@ function triggerMapPrint(cd) {
   if (cd && mapReady) {
     try { map.fitBounds(cd.bounds, { padding: [50, 50] }); } catch {}
     setTimeout(() => {
+      const oldId = mapEl.id;
       mapEl.id = 'print-target';
-      setTimeout(() => { window.print(); setTimeout(() => { mapEl.id = 'map'; }, 700); }, 500);
+      document.body.classList.add('printing-element');
+      setTimeout(() => {
+        window.print();
+        setTimeout(() => {
+          mapEl.id = oldId;
+          document.body.classList.remove('printing-element');
+        }, 700);
+      }, 500);
     }, 700);
   } else {
+    const oldId = mapEl.id;
     mapEl.id = 'print-target';
-    setTimeout(() => { window.print(); setTimeout(() => { mapEl.id = 'map'; }, 700); }, 150);
+    document.body.classList.add('printing-element');
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => {
+        mapEl.id = oldId;
+        document.body.classList.remove('printing-element');
+      }, 700);
+    }, 150);
   }
 }
 
@@ -2652,7 +2768,7 @@ function buildReportOverviewPage() {
       '<h2>🗺️ Übersichtskarte</h2>' +
       '<div class="meta-right">Alle Tage</div>' +
     '</div>' +
-    '<div class="report-map-box" id="report-map-overview" style="height:170mm"></div>' +
+    '<div class="report-map-box" id="report-map-overview"></div>' +
     '</div>';
 }
 
@@ -2795,11 +2911,10 @@ $('btn-full-report').addEventListener('click', async () => {
   html += buildReportBudgetPage();
   target.innerHTML = html;
 
-  // Move target to visible position so Leaflet can compute sizes
+  // Move target to a visible area off-screen so Leaflet can compute sizes
+  // (still positioned outside viewport during render)
   target.style.left = '0';
-  target.style.zIndex = '-1';
-  target.style.opacity = '0';
-  target.style.pointerEvents = 'none';
+  target.style.top = '-20000px';
 
   try {
     // Render the overview map
@@ -2813,15 +2928,15 @@ $('btn-full-report').addEventListener('click', async () => {
       if (el) await renderMiniMap(el, cd, null);
     }
 
-    // All maps rendered. Switch to print mode.
-    target.id = 'print-target';
-    target.style.opacity = '1';
+    // All maps rendered. Switch to print mode by adding body class.
+    // The CSS will handle showing only the report-target across multiple pages.
+    document.body.classList.add('printing-report');
     setTimeout(() => {
       window.print();
       setTimeout(() => {
-        target.id = 'report-target';
+        document.body.classList.remove('printing-report');
         target.style.left = '-10000px';
-        target.style.opacity = '';
+        target.style.top = '0';
         target.innerHTML = '';
         setStatus('Reisebericht fertig.', 'success');
       }, 1000);
@@ -2830,6 +2945,8 @@ $('btn-full-report').addEventListener('click', async () => {
     setStatus('Fehler beim Bericht: ' + err.message, 'error');
     target.innerHTML = '';
     target.style.left = '-10000px';
+    target.style.top = '0';
+    document.body.classList.remove('printing-report');
   }
 });
 
@@ -2861,12 +2978,12 @@ $('btn-print-all-days').addEventListener('click', async () => {
         '<h2>' + esc(cd.label) + '</h2>' +
         '<div class="meta-right">' + formatDist(cd.totalDist) + ' · ' + formatTime(cd.totalTime) + '</div>' +
       '</div>' +
-      '<div class="report-map-box" id="all-map-day-' + cd.dayIndex + '" style="height:230mm"></div>' +
+      '<div class="report-map-box" id="all-map-day-' + cd.dayIndex + '" style="height:165mm"></div>' +
       '</div>';
   });
   target.innerHTML = html;
   target.style.left = '0';
-  target.style.opacity = '0';
+  target.style.top = '-20000px';
 
   try {
     for (const cd of computedDays) {
@@ -2874,14 +2991,13 @@ $('btn-print-all-days').addEventListener('click', async () => {
       if (el) await renderMiniMap(el, cd, null);
     }
 
-    target.id = 'print-target';
-    target.style.opacity = '1';
+    document.body.classList.add('printing-all-maps');
     setTimeout(() => {
       window.print();
       setTimeout(() => {
-        target.id = 'all-maps-target';
+        document.body.classList.remove('printing-all-maps');
         target.style.left = '-10000px';
-        target.style.opacity = '';
+        target.style.top = '0';
         target.innerHTML = '';
         setStatus(computedDays.length + ' Tageskarten gedruckt.', 'success');
       }, 1000);
@@ -2890,6 +3006,8 @@ $('btn-print-all-days').addEventListener('click', async () => {
     setStatus('Fehler: ' + err.message, 'error');
     target.innerHTML = '';
     target.style.left = '-10000px';
+    target.style.top = '0';
+    document.body.classList.remove('printing-all-maps');
   }
 });
 
