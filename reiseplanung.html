@@ -1169,13 +1169,14 @@ function $(id) { return document.getElementById(id); }
 // 'ors' = OpenRouteService profile (preferred, supports all modes)
 // 'osrm' = OSRM profile (fallback, public server only supports 'car')
 // 'directSpeed' = if set, skip routing and use straight-line at this km/h
+// 'rail' = if true, use OpenStreetMap rail network via Overpass API
 const MODES = [
-  { id: 'driving',         label: '🚗 Auto', ors: 'driving-car',     osrm: 'car',  directSpeed: null, dash: null,   lineWidth: 4.5 },
-  { id: 'foot-walking',    label: '🚶 Fuss', ors: 'foot-walking',    osrm: null,   directSpeed: null, dash: '6 5',  lineWidth: 3   },
-  { id: 'cycling-regular', label: '🚲 Velo', ors: 'cycling-regular', osrm: null,   directSpeed: null, dash: null,   lineWidth: 3.5 },
-  { id: 'driving-hgv',     label: '🚌 ÖV',   ors: 'driving-hgv',     osrm: 'car',  directSpeed: null, dash: '10 4', lineWidth: 4   },
-  { id: 'fly',             label: '✈️ Flug',  ors: null,              osrm: null,   directSpeed: 850,  dash: '4 8',  lineWidth: 2.5 },
-  { id: 'train',           label: '🚂 Zug',   ors: null,              osrm: null,   directSpeed: 120,  dash: '12 5', lineWidth: 3.5 },
+  { id: 'driving',         label: '🚗 Auto', ors: 'driving-car',     osrm: 'car',  directSpeed: null, rail: false, dash: null,   lineWidth: 4.5 },
+  { id: 'foot-walking',    label: '🚶 Fuss', ors: 'foot-walking',    osrm: null,   directSpeed: null, rail: false, dash: '6 5',  lineWidth: 3   },
+  { id: 'cycling-regular', label: '🚲 Velo', ors: 'cycling-regular', osrm: null,   directSpeed: null, rail: false, dash: null,   lineWidth: 3.5 },
+  { id: 'driving-hgv',     label: '🚌 ÖV',   ors: 'driving-hgv',     osrm: 'car',  directSpeed: null, rail: false, dash: '10 4', lineWidth: 4   },
+  { id: 'fly',             label: '✈️ Flug',  ors: null,              osrm: null,   directSpeed: 850,  rail: false, dash: '4 8',  lineWidth: 2.5 },
+  { id: 'train',           label: '🚂 Zug',   ors: null,              osrm: null,   directSpeed: null, rail: true,  dash: '12 5', lineWidth: 3.5 },
 ];
 
 const DAY_COLORS = [
@@ -1806,18 +1807,27 @@ async function fetchRouting(from, to, modeId) {
 }
 
 async function calcSegment(from, to, mode) {
-  // Direct-line modes (Flug, Zug): always straight-line
+  // Direct-line modes (Flug only): always straight-line
   if (mode.directSpeed) {
-    const dist = haversine(from.lat, from.lon, to.lat, to.lon) * (mode.id === 'train' ? 1.25 : 1);
+    const dist = haversine(from.lat, from.lon, to.lat, to.lon);
     return { dist, dur: (dist / mode.directSpeed) * 60, pts: null };
   }
 
-  // Try real routing
+  // Rail mode: fetch OSM railway network and find shortest path on rails
+  if (mode.rail) {
+    const result = await fetchRailRoute(from, to);
+    if (result) return result;
+    // Fallback for rail: straight line with rail-typical detour factor and speed
+    const dist = haversine(from.lat, from.lon, to.lat, to.lon) * 1.25;
+    addLog('  ⚠️ Schienennetz nicht verfügbar – nutze Luftlinie mit 100 km/h', 'warn');
+    return { dist, dur: (dist / 100) * 60, pts: null };
+  }
+
+  // Standard road routing
   const result = await fetchRouting(from, to, mode.id);
   if (result) return result;
 
   // Fallback: straight line with mode-appropriate speed
-  // (Auto: 70km/h, Velo: 18km/h, Fuss: 5km/h, ÖV: 50km/h)
   const fallbackSpeeds = {
     'driving':         70,
     'driving-hgv':     50,
@@ -1828,6 +1838,168 @@ async function calcSegment(from, to, mode) {
   const dist = haversine(from.lat, from.lon, to.lat, to.lon);
   addLog('  ⚠️ Kein Routing-Server – nutze Luftlinie mit ' + speed + ' km/h', 'warn');
   return { dist, dur: (dist / speed) * 60, pts: null };
+}
+
+/* ============================================================
+   RAILWAY ROUTING via OpenStreetMap (Overpass API)
+   Fetches all rail tracks within a bounding box covering both points,
+   builds a graph, and computes the shortest path through the rail
+   network using Dijkstra. Works best for short-to-medium distances
+   (< ~600 km). For longer distances we bail out to straight-line.
+   ============================================================ */
+
+const RAIL_MAX_DIST_KM = 600;     // skip Overpass for very long trips
+const RAIL_AVG_SPEED_KMH = 100;   // typical train cruising speed
+
+async function fetchRailRoute(from, to) {
+  const directKm = haversine(from.lat, from.lon, to.lat, to.lon);
+  if (directKm > RAIL_MAX_DIST_KM) {
+    addLog('  Strecke zu lang für Schienen-Routing (' + Math.round(directKm) + ' km)', 'warn');
+    return null;
+  }
+
+  // Bounding box covering both points + 10% buffer (or at least 0.1°)
+  const padLat = Math.max(0.1, Math.abs(to.lat - from.lat) * 0.15);
+  const padLon = Math.max(0.1, Math.abs(to.lon - from.lon) * 0.15);
+  const minLat = Math.min(from.lat, to.lat) - padLat;
+  const maxLat = Math.max(from.lat, to.lat) + padLat;
+  const minLon = Math.min(from.lon, to.lon) - padLon;
+  const maxLon = Math.max(from.lon, to.lon) + padLon;
+
+  // Overpass query: get all rail ways (excluding service tracks, sidings)
+  // The "out geom" returns the actual coordinates of each way.
+  const query = '[out:json][timeout:25];' +
+    '(way["railway"="rail"]["service"!~"."]["usage"!~"^(tourism|industrial|military)$"]' +
+    '(' + minLat + ',' + minLon + ',' + maxLat + ',' + maxLon + '););' +
+    'out geom;';
+
+  addLog('  Lade Schienennetz von Overpass…');
+  let data;
+  try {
+    const res = await fetch(viaProxy('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query)));
+    if (!res.ok) {
+      addLog('  Overpass: HTTP ' + res.status, 'warn');
+      return null;
+    }
+    data = await res.json();
+  } catch (err) {
+    addLog('  Overpass-Fehler: ' + err.message, 'warn');
+    return null;
+  }
+
+  if (!data.elements || !data.elements.length) {
+    addLog('  Keine Schienen in der Region gefunden', 'warn');
+    return null;
+  }
+  addLog('  ' + data.elements.length + ' Schienensegmente geladen', 'success');
+
+  // Build graph: each unique node-coordinate is a node, edges connect consecutive nodes in each way.
+  // To merge nodes that are very close (different ways meeting at junctions), we round
+  // coordinates to 5 decimal places (~1.1m precision).
+  const round = v => Math.round(v * 1e5) / 1e5;
+  const nodeKey = (lat, lon) => round(lat) + '|' + round(lon);
+
+  // Adjacency: nodeKey → array of { to: nodeKey, dist: km }
+  const adj = new Map();
+  // Map keys back to lat/lon for path reconstruction
+  const nodeCoords = new Map();
+
+  function addEdge(aLat, aLon, bLat, bLon) {
+    const ka = nodeKey(aLat, aLon);
+    const kb = nodeKey(bLat, bLon);
+    if (ka === kb) return;
+    nodeCoords.set(ka, [aLat, aLon]);
+    nodeCoords.set(kb, [bLat, bLon]);
+    const d = haversine(aLat, aLon, bLat, bLon);
+    if (!adj.has(ka)) adj.set(ka, []);
+    if (!adj.has(kb)) adj.set(kb, []);
+    adj.get(ka).push({ to: kb, dist: d });
+    adj.get(kb).push({ to: ka, dist: d });
+  }
+
+  for (const way of data.elements) {
+    if (!way.geometry || way.geometry.length < 2) continue;
+    for (let i = 0; i < way.geometry.length - 1; i++) {
+      const a = way.geometry[i];
+      const b = way.geometry[i + 1];
+      addEdge(a.lat, a.lon, b.lat, b.lon);
+    }
+  }
+
+  if (adj.size === 0) {
+    addLog('  Schienen-Graph ist leer', 'warn');
+    return null;
+  }
+
+  // Find nearest graph node to from/to
+  function nearest(lat, lon) {
+    let best = null, bestDist = Infinity;
+    for (const [key, [nlat, nlon]] of nodeCoords) {
+      const d = haversine(lat, lon, nlat, nlon);
+      if (d < bestDist) { bestDist = d; best = key; }
+    }
+    return { key: best, dist: bestDist };
+  }
+  const start = nearest(from.lat, from.lon);
+  const end = nearest(to.lat, to.lon);
+
+  if (!start.key || !end.key) {
+    addLog('  Keine Bahnhöfe gefunden', 'warn');
+    return null;
+  }
+  if (start.dist > 5 || end.dist > 5) {
+    addLog('  Start/Ziel zu weit von Schienen entfernt (' + start.dist.toFixed(1) + '/' + end.dist.toFixed(1) + ' km)', 'warn');
+    return null;
+  }
+
+  // Dijkstra
+  const dists = new Map();
+  const prev = new Map();
+  dists.set(start.key, 0);
+  // Simple priority queue (small enough to use array+sort for our size)
+  const pq = [{ key: start.key, d: 0 }];
+  while (pq.length) {
+    pq.sort((a, b) => a.d - b.d);
+    const { key, d } = pq.shift();
+    if (key === end.key) break;
+    if (d > (dists.get(key) ?? Infinity)) continue;
+    const neighbors = adj.get(key) || [];
+    for (const { to: nk, dist } of neighbors) {
+      const nd = d + dist;
+      if (nd < (dists.get(nk) ?? Infinity)) {
+        dists.set(nk, nd);
+        prev.set(nk, key);
+        pq.push({ key: nk, d: nd });
+      }
+    }
+  }
+
+  if (!dists.has(end.key)) {
+    addLog('  Kein Schienenweg zwischen Start und Ziel gefunden', 'warn');
+    return null;
+  }
+
+  // Reconstruct path
+  const path = [];
+  let cur = end.key;
+  while (cur) {
+    path.unshift(nodeCoords.get(cur));
+    cur = prev.get(cur);
+  }
+  // Add direct-line connection from actual from/to to nearest graph node
+  // (so the line connects all the way to the real points)
+  path.unshift([from.lat, from.lon]);
+  path.push([to.lat, to.lon]);
+
+  const totalDist = dists.get(end.key);
+  addLog('  ✓ Schienenroute: ' + totalDist.toFixed(1) + ' km via ' + path.length + ' Punkten', 'success');
+
+  return {
+    dist: totalDist,
+    dur: (totalDist / RAIL_AVG_SPEED_KMH) * 60,
+    pts: null,        // pts here would be in [lon,lat] format like OSRM; we use polyPts directly
+    polyPtsOverride: path,   // [lat,lon] pairs ready for Leaflet
+  };
 }
 
 /* ============================================================
@@ -1895,20 +2067,24 @@ async function calculateRoute() {
       dayDist += seg.dist;
       dayTime += seg.dur;
 
+      // Determine the polyline points in [lat,lon] order.
+      // - rail returns polyPtsOverride directly as [lat,lon] pairs
+      // - OSRM returns seg.pts as GeoJSON [lon,lat] pairs
+      // - fallback is a straight line between the two endpoints
+      let polyPts;
+      if (seg.polyPtsOverride) {
+        polyPts = seg.polyPtsOverride;
+      } else if (seg.pts) {
+        polyPts = seg.pts.map(p => [p[1], p[0]]);
+      } else {
+        polyPts = [[from.lat, from.lon], [to.lat, to.lon]];
+      }
+
       if (mapReady) {
         const opts = { color: color, weight: mode.lineWidth, opacity: 0.9 };
         if (mode.dash) opts.dashArray = mode.dash;
-        if (seg.pts) {
-          L.polyline(seg.pts.map(p => [p[1], p[0]]), opts).addTo(routeLayer);
-        } else {
-          L.polyline([[from.lat, from.lon], [to.lat, to.lon]], opts).addTo(routeLayer);
-        }
+        L.polyline(polyPts, opts).addTo(routeLayer);
       }
-      // Store geometry points (lat,lon pairs) for the report mini-maps.
-      // If OSRM gave us a real route, use that. Otherwise straight line.
-      const polyPts = seg.pts
-        ? seg.pts.map(p => [p[1], p[0]])
-        : [[from.lat, from.lon], [to.lat, to.lon]];
       segments.push({
         from: from.label, to: to.label,
         dist: seg.dist, dur: seg.dur,
