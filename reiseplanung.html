@@ -1165,13 +1165,17 @@ function $(id) { return document.getElementById(id); }
 /* ============================================================
    CONSTANTS
    ============================================================ */
+// MODES define each transport choice with its routing profile names.
+// 'ors' = OpenRouteService profile (preferred, supports all modes)
+// 'osrm' = OSRM profile (fallback, public server only supports 'car')
+// 'directSpeed' = if set, skip routing and use straight-line at this km/h
 const MODES = [
-  { id: 'driving',         label: '🚗 Auto', osrm: 'car',  directSpeed: null, dash: null,   lineWidth: 4.5 },
-  { id: 'foot-walking',    label: '🚶 Fuss', osrm: 'foot', directSpeed: null, dash: '6 5',  lineWidth: 3   },
-  { id: 'cycling-regular', label: '🚲 Velo', osrm: 'bike', directSpeed: null, dash: null,   lineWidth: 3.5 },
-  { id: 'driving-hgv',     label: '🚌 ÖV',   osrm: 'car',  directSpeed: null, dash: '10 4', lineWidth: 4   },
-  { id: 'fly',             label: '✈️ Flug',  osrm: null,   directSpeed: 850,  dash: '4 8',  lineWidth: 2.5 },
-  { id: 'train',           label: '🚂 Zug',   osrm: null,   directSpeed: 120,  dash: '12 5', lineWidth: 3.5 },
+  { id: 'driving',         label: '🚗 Auto', ors: 'driving-car',     osrm: 'car',  directSpeed: null, dash: null,   lineWidth: 4.5 },
+  { id: 'foot-walking',    label: '🚶 Fuss', ors: 'foot-walking',    osrm: null,   directSpeed: null, dash: '6 5',  lineWidth: 3   },
+  { id: 'cycling-regular', label: '🚲 Velo', ors: 'cycling-regular', osrm: null,   directSpeed: null, dash: null,   lineWidth: 3.5 },
+  { id: 'driving-hgv',     label: '🚌 ÖV',   ors: 'driving-hgv',     osrm: 'car',  directSpeed: null, dash: '10 4', lineWidth: 4   },
+  { id: 'fly',             label: '✈️ Flug',  ors: null,              osrm: null,   directSpeed: 850,  dash: '4 8',  lineWidth: 2.5 },
+  { id: 'train',           label: '🚂 Zug',   ors: null,              osrm: null,   directSpeed: 120,  dash: '12 5', lineWidth: 3.5 },
 ];
 
 const DAY_COLORS = [
@@ -1672,6 +1676,8 @@ async function runLiveGeocode(di, pi, name) {
       };
       saveToStorage();
       setPlaceStatus(di, pi, 'ok', 'Gefunden: ' + result.matched);
+      // After a successful geocode, schedule an auto-recalculate of the whole route
+      scheduleAutoRecalculate();
     } else {
       delete activeTrip.days[di].places[pi]._geocoded;
       saveToStorage();
@@ -1680,6 +1686,31 @@ async function runLiveGeocode(di, pi, name) {
   } catch (err) {
     setPlaceStatus(di, pi, 'err', 'Fehler: ' + err.message);
   }
+}
+
+/* ============================================================
+   AUTO-RECALCULATE
+   After a successful live geocode, wait briefly for any other
+   in-flight searches and then auto-run calculateRoute(). This
+   keeps the map and table in sync with the user's edits.
+   ============================================================ */
+let autoRecalcTimer = null;
+const AUTO_RECALC_DELAY = 1200;  // ms after last successful geocode
+
+function scheduleAutoRecalculate() {
+  if (autoRecalcTimer) clearTimeout(autoRecalcTimer);
+  autoRecalcTimer = setTimeout(() => {
+    autoRecalcTimer = null;
+    // Don't auto-recalc if we have nothing to compute, or if a manual calc is running
+    if (!activeTrip) return;
+    // At least one day must have ≥2 places that have been geocoded
+    const hasViableRoute = activeTrip.days.some(day =>
+      day.places.filter(p => p._geocoded).length >= 2
+    );
+    if (!hasViableRoute) return;
+    addLog('Auto-Berechnung gestartet…');
+    calculateRoute().catch(err => addLog('Auto-Berechnung Fehler: ' + err.message, 'error'));
+  }, AUTO_RECALC_DELAY);
 }
 
 /* After every renderDays() we re-apply the visible status indicators
@@ -1723,36 +1754,80 @@ function haversine(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-async function fetchOSRM(from, to, profile) {
-  const url = 'https://router.project-osrm.org/route/v1/' + profile + '/' +
-    from.lon + ',' + from.lat + ';' + to.lon + ',' + to.lat +
-    '?overview=full&geometries=geojson';
-  try {
-    const res = await fetch(viaProxy(url));
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.routes && data.routes.length) {
-      return {
-        dist: data.routes[0].distance / 1000,
-        dur: data.routes[0].duration / 60,
-        pts: data.routes[0].geometry.coordinates,
-      };
+/* ============================================================
+   ROUTING — multi-server with proper profile support
+   - Primary: routing.openstreetmap.de (OSRM with car/bike/foot profiles)
+   - Fallback: router.project-osrm.org (only car, but very reliable)
+   - Last resort: straight-line (haversine) with mode-specific speeds
+   ============================================================ */
+
+// Server endpoints. Each maps mode.id → routing-server profile name.
+const ROUTING_SERVERS = [
+  {
+    name: 'OSM-DE',
+    base: 'https://routing.openstreetmap.de/routed-{profile}/route/v1/{profile}/',
+    profiles: { 'driving': 'car', 'driving-hgv': 'car', 'foot-walking': 'foot', 'cycling-regular': 'bike' },
+  },
+  {
+    name: 'OSRM-public',
+    base: 'https://router.project-osrm.org/route/v1/{profile}/',
+    profiles: { 'driving': 'car', 'driving-hgv': 'car' },
+    // foot/bike not supported here
+  },
+];
+
+async function fetchRouting(from, to, modeId) {
+  for (const server of ROUTING_SERVERS) {
+    const profile = server.profiles[modeId];
+    if (!profile) continue;
+    const base = server.base.replaceAll('{profile}', profile);
+    const url = base + from.lon + ',' + from.lat + ';' + to.lon + ',' + to.lat +
+      '?overview=full&geometries=geojson';
+    try {
+      const res = await fetch(viaProxy(url));
+      if (!res.ok) {
+        addLog('  ' + server.name + ' (' + profile + '): HTTP ' + res.status, 'warn');
+        continue;
+      }
+      const data = await res.json();
+      if (data.routes && data.routes.length) {
+        addLog('  ✓ Routing via ' + server.name + ' (' + profile + ')', 'success');
+        return {
+          dist: data.routes[0].distance / 1000,
+          dur: data.routes[0].duration / 60,
+          pts: data.routes[0].geometry.coordinates,
+        };
+      }
+    } catch (err) {
+      addLog('  ' + server.name + ': ' + err.message, 'warn');
     }
-  } catch (err) {
-    console.error('OSRM error:', err);
   }
   return null;
 }
 
 async function calcSegment(from, to, mode) {
+  // Direct-line modes (Flug, Zug): always straight-line
   if (mode.directSpeed) {
     const dist = haversine(from.lat, from.lon, to.lat, to.lon) * (mode.id === 'train' ? 1.25 : 1);
     return { dist, dur: (dist / mode.directSpeed) * 60, pts: null };
   }
-  const result = await fetchOSRM(from, to, mode.osrm);
+
+  // Try real routing
+  const result = await fetchRouting(from, to, mode.id);
   if (result) return result;
+
+  // Fallback: straight line with mode-appropriate speed
+  // (Auto: 70km/h, Velo: 18km/h, Fuss: 5km/h, ÖV: 50km/h)
+  const fallbackSpeeds = {
+    'driving':         70,
+    'driving-hgv':     50,
+    'cycling-regular': 18,
+    'foot-walking':    5,
+  };
+  const speed = fallbackSpeeds[mode.id] || 50;
   const dist = haversine(from.lat, from.lon, to.lat, to.lon);
-  return { dist, dur: dist * 1.5, pts: null };
+  addLog('  ⚠️ Kein Routing-Server – nutze Luftlinie mit ' + speed + ' km/h', 'warn');
+  return { dist, dur: (dist / speed) * 60, pts: null };
 }
 
 /* ============================================================
@@ -2319,6 +2394,7 @@ const DnD = {
         activeTrip.days.splice(newIdx, 0, moved);
         saveToStorage();
         renderDays();
+        if (typeof scheduleAutoRecalculate === 'function') scheduleAutoRecalculate();
         return;
       }
     }
@@ -2343,6 +2419,7 @@ const DnD = {
         places.splice(newIdx, 0, moved);
         saveToStorage();
         renderDays();
+        if (typeof scheduleAutoRecalculate === 'function') scheduleAutoRecalculate();
         return;
       }
     }
@@ -2505,7 +2582,9 @@ $('days-list').addEventListener('click', e => {
     const pi = parseInt(delPlace.dataset.place);
     if (activeTrip.days[di].places.length <= 2) return;
     activeTrip.days[di].places.splice(pi, 1);
-    saveToStorage(); renderDays(); return;
+    saveToStorage(); renderDays();
+    scheduleAutoRecalculate();
+    return;
   }
 
   // Transport mode
@@ -2514,7 +2593,9 @@ $('days-list').addEventListener('click', e => {
     const di = parseInt(setTransport.dataset.day);
     const pi = parseInt(setTransport.dataset.place);
     activeTrip.days[di].places[pi].transport = setTransport.dataset.setTransport;
-    saveToStorage(); renderDays(); return;
+    saveToStorage(); renderDays();
+    scheduleAutoRecalculate();        // route differs per transport, so re-run
+    return;
   }
 
   // Toggle hotel
