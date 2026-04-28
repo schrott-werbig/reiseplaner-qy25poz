@@ -1904,7 +1904,17 @@ async function calculateRoute() {
           L.polyline([[from.lat, from.lon], [to.lat, to.lon]], opts).addTo(routeLayer);
         }
       }
-      segments.push({ from: from.label, to: to.label, dist: seg.dist, dur: seg.dur, mode, color });
+      // Store geometry points (lat,lon pairs) for the report mini-maps.
+      // If OSRM gave us a real route, use that. Otherwise straight line.
+      const polyPts = seg.pts
+        ? seg.pts.map(p => [p[1], p[0]])
+        : [[from.lat, from.lon], [to.lat, to.lon]];
+      segments.push({
+        from: from.label, to: to.label,
+        dist: seg.dist, dur: seg.dur,
+        mode, color,
+        polyPts,                  // real geometry for the report
+      });
     }
 
     if (mapReady) {
@@ -2985,9 +2995,13 @@ async function renderMiniMap(container, computedDay, allBounds) {
   const segLayer = L.layerGroup().addTo(miniMap);
 
   if (computedDay) {
-    // Single day map: draw only that day's segments
+    // Single day map: draw each segment using its actual route geometry
     computedDay.segments.forEach(seg => {
-      // We don't have raw points for segments here; redraw from bounds
+      if (seg.polyPts && seg.polyPts.length >= 2) {
+        const opts = { color: seg.color, weight: 4, opacity: 0.9 };
+        if (seg.mode && seg.mode.dash) opts.dashArray = seg.mode.dash;
+        L.polyline(seg.polyPts, opts).addTo(segLayer);
+      }
     });
     // Draw markers for that day
     computedDay.bounds.forEach((latlon, i) => {
@@ -3002,20 +3016,18 @@ async function renderMiniMap(container, computedDay, allBounds) {
       });
       L.marker(latlon, { icon }).addTo(segLayer);
     });
-    // Connect with a polyline
-    if (computedDay.bounds.length >= 2) {
-      L.polyline(computedDay.bounds, { color: computedDay.color, weight: 4, opacity: 0.85 })
-        .addTo(segLayer);
-    }
     miniMap.fitBounds(computedDay.bounds, { padding: [20, 20] });
   } else if (allBounds && allBounds.length) {
-    // Overview map: draw all days, each in its own colour
+    // Overview map: draw all days, each in its own colour, with real geometry
     let globalIdx = 0;
     computedDays.forEach(cd => {
-      if (cd.bounds.length >= 2) {
-        L.polyline(cd.bounds, { color: cd.color, weight: 3.5, opacity: 0.85 })
-          .addTo(segLayer);
-      }
+      cd.segments.forEach(seg => {
+        if (seg.polyPts && seg.polyPts.length >= 2) {
+          const opts = { color: seg.color, weight: 3.5, opacity: 0.85 };
+          if (seg.mode && seg.mode.dash) opts.dashArray = seg.mode.dash;
+          L.polyline(seg.polyPts, opts).addTo(segLayer);
+        }
+      });
       cd.bounds.forEach(latlon => {
         globalIdx++;
         const isFirst = globalIdx === 1;
@@ -3166,7 +3178,7 @@ function buildReportBudgetPage() {
   return '<div class="report-page">' +
     '<div class="report-day-header">' +
       '<div class="dot" style="background:#8a6800"></div>' +
-      '<h2>💰 Kosten & Budget</h2>' +
+      '<h2>💰 Kosten &amp; Budget</h2>' +
     '</div>' +
     '<div class="report-summary-grid">' +
       '<div class="report-summary-cell">' +
@@ -3192,6 +3204,141 @@ function buildReportBudgetPage() {
     '</div></div>';
 }
 
+/** Build a single page listing ALL route segments across all days */
+function buildReportAllRoutesPage() {
+  if (!computedDays.length) return '';
+  const c = getCurrency();
+  let rows = '';
+  let globalSegNo = 0;
+  let totalDist = 0, totalTime = 0, totalCost = 0;
+
+  computedDays.forEach(cd => {
+    // Day separator row
+    rows += '<tr style="background:#edf7f1;font-weight:700;color:#2d6a4f">' +
+      '<td colspan="8" style="padding:5px 8px">' +
+      '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' +
+      cd.color + ';margin-right:5px;vertical-align:middle"></span>' +
+      esc(cd.label) + ' · ' + formatDist(cd.totalDist) + ' · ' + formatTime(cd.totalTime) +
+      '</td></tr>';
+    cd.segments.forEach((seg, si) => {
+      globalSegNo++;
+      const price = parseFloat(getSegPrice(cd.dayIndex, si));
+      if (!isNaN(price)) totalCost += price;
+      totalDist += seg.dist;
+      totalTime += seg.dur;
+      rows += '<tr>' +
+        '<td>' + globalSegNo + '</td>' +
+        '<td>' + esc(seg.from) + '</td>' +
+        '<td>→</td>' +
+        '<td>' + esc(seg.to) + '</td>' +
+        '<td class="num">' + formatDist(seg.dist) + '</td>' +
+        '<td class="num">' + formatTime(seg.dur) + '</td>' +
+        '<td>' + seg.mode.label + '</td>' +
+        '<td class="num">' + (!isNaN(price) && price > 0 ? formatPrice(price) + ' ' + c : '–') + '</td>' +
+        '</tr>';
+    });
+  });
+
+  return '<div class="report-page">' +
+    '<div class="report-day-header">' +
+      '<div class="dot" style="background:#1a6b8a"></div>' +
+      '<h2>🛣️ Alle Etappen</h2>' +
+      '<div class="meta-right">' + formatDist(totalDist) + ' · ' + formatTime(totalTime) + '</div>' +
+    '</div>' +
+    '<table class="report-table">' +
+      '<thead><tr><th>#</th><th>Von</th><th></th><th>Nach</th>' +
+      '<th class="num">Distanz</th><th class="num">Zeit</th><th>Transport</th>' +
+      '<th class="num">Kosten</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+      '<tfoot><tr><td colspan="4" class="num">Total</td>' +
+        '<td class="num">' + formatDist(totalDist) + '</td>' +
+        '<td class="num">' + formatTime(totalTime) + '</td>' +
+        '<td></td>' +
+        '<td class="num">' + (totalCost > 0 ? formatPrice(totalCost) + ' ' + c : '–') + '</td>' +
+      '</tr></tfoot>' +
+    '</table></div>';
+}
+
+/** Build a page with a detailed list of all hotels and expenses across all days */
+function buildReportAllExpensesPage() {
+  const c = getCurrency();
+  let hotelRows = '';
+  let expRows = '';
+  let hotelTotal = 0;
+  let expTotal = 0;
+
+  activeTrip.days.forEach((day, di) => {
+    const cd = computedDays.find(d => d.dayIndex === di);
+    const dayLabel = cd ? cd.label : day.label;
+    const dayColor = cd ? cd.color : '#888';
+
+    const h = day.hotel || {};
+    if (h.name || parseFloat(h.pricePerNight) > 0) {
+      const price = parseFloat(h.pricePerNight) || 0;
+      const nights = parseFloat(h.nights) || 1;
+      const sub = price * nights;
+      hotelTotal += sub;
+      hotelRows += '<tr>' +
+        '<td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' +
+          dayColor + ';margin-right:5px;vertical-align:middle"></span>' + esc(dayLabel) + '</td>' +
+        '<td>' + esc(h.name || '–') + '</td>' +
+        '<td class="num">' + (price > 0 ? formatPrice(price) + ' ' + c : '–') + '</td>' +
+        '<td class="num">' + nights + '</td>' +
+        '<td class="num">' + (sub > 0 ? formatPrice(sub) + ' ' + c : '–') + '</td>' +
+        '</tr>';
+    }
+
+    (day.expenses || []).forEach(ex => {
+      if (!ex.description && !parseFloat(ex.amount)) return;
+      const amt = parseFloat(ex.amount) || 0;
+      expTotal += amt;
+      expRows += '<tr>' +
+        '<td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' +
+          dayColor + ';margin-right:5px;vertical-align:middle"></span>' + esc(dayLabel) + '</td>' +
+        '<td>' + esc(getCatLabel(ex.category)) + '</td>' +
+        '<td>' + esc(ex.description || '–') + '</td>' +
+        '<td class="num">' + (amt > 0 ? formatPrice(amt) + ' ' + c : '–') + '</td>' +
+        '</tr>';
+    });
+  });
+
+  if (!hotelRows && !expRows) return '';
+
+  let html = '<div class="report-page">' +
+    '<div class="report-day-header">' +
+      '<div class="dot" style="background:#8a6800"></div>' +
+      '<h2>🏨 Hotels &amp; Ausgaben</h2>' +
+    '</div>';
+
+  if (hotelRows) {
+    html += '<div class="report-section">' +
+      '<div class="report-section-title">🏨 Unterkünfte</div>' +
+      '<table class="report-table">' +
+        '<thead><tr><th>Tag</th><th>Hotel</th>' +
+        '<th class="num">Preis/Nacht</th><th class="num">Nächte</th>' +
+        '<th class="num">Total</th></tr></thead>' +
+        '<tbody>' + hotelRows + '</tbody>' +
+        '<tfoot><tr><td colspan="4" class="num">Hotels Total</td>' +
+          '<td class="num">' + formatPrice(hotelTotal) + ' ' + c + '</td></tr></tfoot>' +
+      '</table></div>';
+  }
+
+  if (expRows) {
+    html += '<div class="report-section">' +
+      '<div class="report-section-title">💸 Weitere Ausgaben</div>' +
+      '<table class="report-table">' +
+        '<thead><tr><th>Tag</th><th>Kategorie</th><th>Beschreibung</th>' +
+        '<th class="num">Betrag</th></tr></thead>' +
+        '<tbody>' + expRows + '</tbody>' +
+        '<tfoot><tr><td colspan="3" class="num">Ausgaben Total</td>' +
+          '<td class="num">' + formatPrice(expTotal) + ' ' + c + '</td></tr></tfoot>' +
+      '</table></div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
 /** Main: build and print the full report */
 $('btn-full-report').addEventListener('click', async () => {
   if (!activeTrip) { setStatus('Keine Reise ausgewählt.', 'error'); return; }
@@ -3214,7 +3361,13 @@ $('btn-full-report').addEventListener('click', async () => {
   const allBounds = [];
   computedDays.forEach(cd => cd.bounds.forEach(b => allBounds.push(b)));
   if (allBounds.length) html += buildReportOverviewPage();
+  // Overview tables: all routes across all days
+  html += buildReportAllRoutesPage();
+  // Per-day pages with map + day-specific table
   computedDays.forEach((cd, i) => { html += buildReportDayPage(cd, i); });
+  // Detailed list of all hotels and expenses
+  html += buildReportAllExpensesPage();
+  // Budget summary
   html += buildReportBudgetPage();
   target.innerHTML = html;
 
