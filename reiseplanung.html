@@ -306,6 +306,34 @@ header h1 { font-size: 1.15rem; font-weight: 500; }
   outline: none;
 }
 .place-input:focus { border-color: var(--green-mid); }
+
+/* Geocoding status indicator (✓ / ✗ / ⌛) */
+.place-status {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: help;
+}
+.place-status.idle    { color: transparent; }
+.place-status.loading { color: var(--text-faint); }
+.place-status.ok      { color: var(--green-mid); }
+.place-status.err     { color: var(--red); }
+.place-status .spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid #cfe3d4;
+  border-top-color: var(--green-dark);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .place-delete-btn {
   color: var(--text-faint);
   font-size: 0.77rem;
@@ -1450,15 +1478,80 @@ function renderMapLegend() {
 /* ============================================================
    NETWORK: GEOCODING & ROUTING
    ============================================================ */
+/* ============================================================
+   GEOCODING — robust with cache, throttle, and Photon fallback
+   - Cache: localStorage saves successful results so repeated lookups
+            (e.g. same city across multiple days) skip the network entirely.
+   - Throttle: enforces ≥1.1s between Nominatim requests to respect the
+             OSM fair-use policy and avoid being blocked.
+   - Fallback: if Nominatim fails (blocked, network, etc.), tries Photon
+              (a Komoot-hosted geocoder built on OSM data, no rate limit).
+   ============================================================ */
+
+const GEOCODE_CACHE_KEY = 'reiseplaner_geocode_cache_v1';
+let geocodeCache = (() => {
+  try { return JSON.parse(localStorage.getItem(GEOCODE_CACHE_KEY) || '{}'); }
+  catch { return {}; }
+})();
+function saveGeocodeCache() {
+  try { localStorage.setItem(GEOCODE_CACHE_KEY, JSON.stringify(geocodeCache)); } catch {}
+}
+
+let lastNominatimRequest = 0;
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function nominatimQuery(variant) {
+  // Enforce ≥1.1s between Nominatim requests (OSM policy: ≤1 req/sec).
+  // We measure from the END of the previous request to be conservative.
+  const now = Date.now();
+  const wait = 1100 - (now - lastNominatimRequest);
+  if (wait > 0) await sleep(wait);
+
+  const url = 'https://nominatim.openstreetmap.org/search?' +
+    new URLSearchParams({
+      q: variant, format: 'json', limit: 1, 'accept-language': 'de'
+    });
+  try {
+    const res = await fetch(viaProxy(url));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (Array.isArray(data) && data.length) {
+      return {
+        lat: parseFloat(data[0].lat),
+        lon: parseFloat(data[0].lon),
+        display: data[0].display_name,
+      };
+    }
+    return null;
+  } finally {
+    // Even on failure, count as a "request used" so we don't hammer
+    lastNominatimRequest = Date.now();
+  }
+}
+
+async function photonQuery(variant) {
+  // Photon (Komoot) – no enforced rate limit
+  const url = 'https://photon.komoot.io/api/?' +
+    new URLSearchParams({ q: variant, limit: 1, lang: 'de' });
+  const res = await fetch(viaProxy(url));
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  if (data.features && data.features.length) {
+    const f = data.features[0];
+    const c = f.geometry.coordinates; // [lon, lat]
+    const props = f.properties || {};
+    const display = [props.name, props.city, props.country].filter(Boolean).join(', ');
+    return { lat: c[1], lon: c[0], display: display || variant };
+  }
+  return null;
+}
+
 async function geocode(query) {
   if (!query || !query.trim()) return null;
   const original = query.trim();
 
-  // Try variants: original, then cleaned versions
-  // This handles "Zürich HB" → "Zürich Hauptbahnhof", "Milano Centrale" → "Milano", etc.
+  // Build variant list (original + simplifications)
   const variants = [original];
-
-  // Variant: strip common station suffixes
   const stripped = original
     .replace(/\s+HB\b/gi, ' Hauptbahnhof')
     .replace(/\s+Centrale\b/gi, '')
@@ -1467,40 +1560,159 @@ async function geocode(query) {
     .replace(/\s+Bahnhof\b/gi, '')
     .trim();
   if (stripped !== original && stripped) variants.push(stripped);
-
-  // Variant: just the first word (city name only)
   const firstWord = original.split(/[\s,]+/)[0];
   if (firstWord && firstWord.length > 2 && firstWord !== original && !variants.includes(firstWord)) {
     variants.push(firstWord);
   }
 
   for (const variant of variants) {
-    const url = 'https://nominatim.openstreetmap.org/search?' +
-      new URLSearchParams({
-        q: variant,
-        format: 'json',
-        limit: 1,
-        'accept-language': 'de'
-      });
+    const cacheKey = variant.toLowerCase();
+    // Cache hit?
+    if (geocodeCache[cacheKey]) {
+      const c = geocodeCache[cacheKey];
+      addLog('  ✓ Aus Cache: "' + variant + '"', 'success');
+      return { lat: c.lat, lon: c.lon, matched: variant };
+    }
+
+    addLog('Geocode: "' + variant + '"');
+
+    // Try Nominatim first
+    let result = null;
     try {
-      addLog('Geocode: "' + variant + '"');
-      const res = await fetch(viaProxy(url));
-      if (!res.ok) {
-        addLog('  HTTP ' + res.status + ' for "' + variant + '"', 'warn');
-        continue;
-      }
-      const data = await res.json();
-      if (Array.isArray(data) && data.length) {
-        addLog('  ✓ Found: ' + data[0].display_name.substring(0, 60), 'success');
-        return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), matched: variant };
-      } else {
-        addLog('  No result for "' + variant + '"', 'warn');
-      }
+      result = await nominatimQuery(variant);
+      if (result) addLog('  ✓ Gefunden (Nominatim): ' + result.display.substring(0, 60), 'success');
     } catch (err) {
-      addLog('  Error: ' + err.message, 'error');
+      addLog('  Nominatim-Fehler: ' + err.message + ' – versuche Photon', 'warn');
+    }
+
+    // If Nominatim failed or returned nothing, try Photon
+    if (!result) {
+      try {
+        result = await photonQuery(variant);
+        if (result) addLog('  ✓ Gefunden (Photon): ' + result.display.substring(0, 60), 'success');
+      } catch (err) {
+        addLog('  Photon-Fehler: ' + err.message, 'error');
+      }
+    }
+
+    if (result) {
+      geocodeCache[cacheKey] = { lat: result.lat, lon: result.lon };
+      saveGeocodeCache();
+      return { lat: result.lat, lon: result.lon, matched: variant };
     }
   }
   return null;
+}
+
+/* ============================================================
+   LIVE GEOCODING (search as user types)
+   - Debounced 1500ms after the last keystroke per input field.
+   - Visual indicator on each place input shows status:
+       idle (no name), loading (⌛), ok (✓), err (✗)
+   - Sets place._geocoded = {lat, lon} so calculation can skip
+     re-geocoding on Berechnen-click.
+   ============================================================ */
+const liveGeocodeTimers = {};        // key "di_pi" → timeout id
+const liveGeocodeCounters = {};      // key "di_pi" → request seq num
+const LIVE_GEOCODE_DELAY = 1500;     // ms
+
+function setPlaceStatus(di, pi, state, message) {
+  const el = document.querySelector('[data-status="' + di + '_' + pi + '"]');
+  if (!el) return;
+  el.classList.remove('idle', 'loading', 'ok', 'err');
+  el.classList.add(state);
+  el.title = message || '';
+  if (state === 'loading')      el.innerHTML = '<span class="spinner"></span>';
+  else if (state === 'ok')      el.textContent = '✓';
+  else if (state === 'err')     el.textContent = '✗';
+  else                          el.textContent = '';
+}
+
+function scheduleLiveGeocode(di, pi, name) {
+  const key = di + '_' + pi;
+  // Cancel any pending request for this place
+  if (liveGeocodeTimers[key]) {
+    clearTimeout(liveGeocodeTimers[key]);
+    delete liveGeocodeTimers[key];
+  }
+  // Empty input → reset status, no search
+  const trimmed = (name || '').trim();
+  if (!trimmed) {
+    setPlaceStatus(di, pi, 'idle');
+    if (activeTrip && activeTrip.days[di] && activeTrip.days[di].places[pi]) {
+      delete activeTrip.days[di].places[pi]._geocoded;
+    }
+    return;
+  }
+  // Show "waiting" state immediately with a hint
+  setPlaceStatus(di, pi, 'idle', 'Wartet auf Eingabepause…');
+
+  liveGeocodeTimers[key] = setTimeout(() => {
+    runLiveGeocode(di, pi, trimmed);
+  }, LIVE_GEOCODE_DELAY);
+}
+
+async function runLiveGeocode(di, pi, name) {
+  // Track request sequence so a slow earlier request can't overwrite a later one
+  liveGeocodeCounters[di + '_' + pi] = (liveGeocodeCounters[di + '_' + pi] || 0) + 1;
+  const seq = liveGeocodeCounters[di + '_' + pi];
+
+  setPlaceStatus(di, pi, 'loading', 'Suche "' + name + '"…');
+  try {
+    const result = await geocode(name);
+    // If a newer request started after us, abandon
+    if (liveGeocodeCounters[di + '_' + pi] !== seq) return;
+    // If user changed the value or the structure since, abandon
+    if (!activeTrip || !activeTrip.days[di] || !activeTrip.days[di].places[pi]) return;
+    if (activeTrip.days[di].places[pi].name.trim() !== name) return;
+
+    if (result) {
+      activeTrip.days[di].places[pi]._geocoded = {
+        lat: result.lat, lon: result.lon, matched: result.matched
+      };
+      saveToStorage();
+      setPlaceStatus(di, pi, 'ok', 'Gefunden: ' + result.matched);
+    } else {
+      delete activeTrip.days[di].places[pi]._geocoded;
+      saveToStorage();
+      setPlaceStatus(di, pi, 'err', 'Nicht gefunden – Schreibweise prüfen');
+    }
+  } catch (err) {
+    setPlaceStatus(di, pi, 'err', 'Fehler: ' + err.message);
+  }
+}
+
+/* After every renderDays() we re-apply the visible status indicators
+   based on what's already known (cache hits or previously geocoded). */
+function refreshAllPlaceStatuses() {
+  if (!activeTrip) return;
+  activeTrip.days.forEach((day, di) => {
+    day.places.forEach((place, pi) => {
+      const name = (place.name || '').trim();
+      if (!name) {
+        setPlaceStatus(di, pi, 'idle');
+        return;
+      }
+      // Already geocoded earlier?
+      if (place._geocoded) {
+        setPlaceStatus(di, pi, 'ok', 'Bereits gefunden');
+        return;
+      }
+      // In cache?
+      const cacheKey = name.toLowerCase();
+      if (geocodeCache[cacheKey]) {
+        place._geocoded = {
+          lat: geocodeCache[cacheKey].lat,
+          lon: geocodeCache[cacheKey].lon,
+          matched: name,
+        };
+        setPlaceStatus(di, pi, 'ok', 'Gefunden (Cache)');
+        return;
+      }
+      // Otherwise schedule a search
+      scheduleLiveGeocode(di, pi, name);
+    });
+  });
 }
 
 function haversine(lat1, lon1, lat2, lon2) {
@@ -1572,7 +1784,14 @@ async function calculateRoute() {
     addLog('--- Tag ' + (di + 1) + ': ' + day.label + ' ---');
     const coords = [];
     for (const place of places) {
-      const c = await geocode(place.name);
+      let c;
+      // Use pre-geocoded coords from live search if available (much faster, no network)
+      if (place._geocoded && typeof place._geocoded.lat === 'number') {
+        c = { lat: place._geocoded.lat, lon: place._geocoded.lon };
+        addLog('  ✓ Bereits geocodiert: "' + place.name + '"', 'success');
+      } else {
+        c = await geocode(place.name);
+      }
       if (!c) {
         addLog('✗ "' + place.name + '" konnte nicht gefunden werden – wird übersprungen', 'error');
         skippedPlaces.push(place.name);
@@ -1874,6 +2093,7 @@ function renderDays() {
         '<div class="place-num" style="background:' + numColor + '">' + placeNumber + '</div>' +
         '<input class="place-input" type="text" value="' + esc(place.name) +
         '" placeholder="Ort eingeben…" data-day="' + di + '" data-place="' + pi + '" data-place-name>' +
+        '<span class="place-status idle" data-status="' + di + '_' + pi + '" title=""></span>' +
         (canDel ? '<button class="place-delete-btn" data-day="' + di + '" data-place="' + pi + '" data-delete-place title="Entfernen">✕</button>' : '') +
         '</div>';
 
@@ -1941,6 +2161,10 @@ function renderDays() {
       hotelHtml + expHtml +
       '</div></div>';
   }).join('');
+
+  // Apply visual status indicators (cache hits, pending searches, etc.)
+  // Done after innerHTML so the elements exist.
+  refreshAllPlaceStatuses();
 }
 
 /* ============================================================
@@ -2345,7 +2569,9 @@ $('days-list').addEventListener('input', e => {
     const di = parseInt(t.dataset.day);
     const pi = parseInt(t.dataset.place);
     activeTrip.days[di].places[pi].name = t.value;
-    saveToStorage(); return;
+    saveToStorage();
+    scheduleLiveGeocode(di, pi, t.value);
+    return;
   }
   if (t.dataset.hotelField) {
     const di = parseInt(t.dataset.day);
