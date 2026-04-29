@@ -616,6 +616,52 @@ header h1 { font-size: 1.15rem; font-weight: 500; }
 .day-print-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 
 /* ============================================================
+   REISEFÜHRER (POI search results)
+   ============================================================ */
+.poi-item {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: 1.5px solid var(--border);
+  margin-bottom: 5px;
+  cursor: pointer;
+  transition: all 0.12s;
+  background: #fff;
+}
+.poi-item:hover  { background: #f0faf4; border-color: var(--green-mid); }
+.poi-item.sel    { background: #eaf7ef; border-color: var(--green-dark); }
+.poi-check {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  flex-shrink: 0;
+  margin-top: 2px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.7rem;
+}
+.poi-item.sel .poi-check {
+  background: var(--green-dark);
+  border-color: var(--green-dark);
+  color: #fff;
+}
+.poi-name { font-size: 0.85rem; font-weight: 600; color: var(--text); }
+.poi-cat  { font-size: 0.68rem; color: var(--text-faint); margin-top: 1px; margin-bottom: 3px; }
+.poi-desc { font-size: 0.72rem; color: var(--text-soft); line-height: 1.4; }
+.poi-thumb {
+  width: 52px; height: 52px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+.guide-loading {
+  text-align: center;
+  padding: 30px 10px;
+  color: var(--text-faint);
+  font-size: 0.83rem;
+}
+
+/* ============================================================
    MOBILE: BURGER + DRAWER
    ============================================================ */
 
@@ -1011,6 +1057,9 @@ table.report-table tfoot td {
         <button class="btn small ghost" id="btn-add-n-days">+ N Tage…</button>
         <button class="btn small solid" id="btn-calculate" style="margin-left:auto">▶ Berechnen</button>
       </div>
+      <div style="margin-top:6px">
+        <button class="btn" id="btn-guide" style="width:100%;border-color:#d4622a;color:#d4622a">🔭 Reiseführer – Sehenswürdigkeiten</button>
+      </div>
     </div>
 
     <div class="panel" id="panel-export" style="display:none">
@@ -1112,6 +1161,36 @@ table.report-table tfoot td {
     <div class="modal-actions">
       <button class="btn ghost" id="btn-cancel-add-days">Abbrechen</button>
       <button class="btn solid" id="btn-confirm-add-days">Hinzufügen</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-guide">
+  <div class="modal-box" style="width:520px;max-width:95vw;max-height:85vh;display:flex;flex-direction:column">
+    <h3 style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+      🔭 Reiseführer
+      <span style="font-size:0.72rem;color:var(--text-faint);font-weight:normal;flex:1">
+        Sehenswürdigkeiten in der Nähe entdecken
+      </span>
+    </h3>
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-shrink:0">
+      <input type="text" class="modal-input" id="guide-input" placeholder="Stadt eingeben (z.B. Florenz, Berlin…)" autocomplete="off" style="flex:1;margin-bottom:0">
+      <button class="btn solid" id="guide-search-btn">Suchen</button>
+    </div>
+    <div id="guide-results" style="flex:1;overflow-y:auto;min-height:200px;border:1px solid var(--border);border-radius:7px;padding:8px;background:var(--surface-alt)">
+      <div style="text-align:center;padding:30px 10px;color:var(--text-faint);font-size:0.83rem">
+        Stadt oder Ort eingeben und auf «Suchen» klicken.
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:10px;flex-shrink:0;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:0.78rem;color:var(--text-soft)">Zu Tag:</span>
+        <select class="modal-input" id="guide-day-select" style="margin-bottom:0;padding:5px 8px;width:auto;font-size:0.82rem"></select>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="btn ghost" id="guide-cancel-btn">Schliessen</button>
+        <button class="btn solid" id="guide-add-btn">Ausgewählte hinzufügen</button>
+      </div>
     </div>
   </div>
 </div>
@@ -2936,6 +3015,264 @@ $('btn-calculate').addEventListener('click', () => {
     console.error('Route calc error:', err);
     setStatus('Fehler: ' + err.message, 'error');
   });
+});
+
+/* ============================================================
+   REISEFÜHRER — Wikipedia-based POI discovery
+   Workflow:
+     1. User opens modal, types a city name
+     2. Geocode the city via existing geocode() function
+     3. Use Wikipedia geosearch API (de, fallback en) to find articles
+        within 10 km radius
+     4. Fetch summaries + thumbnails for top hits
+     5. Categorize by keyword in title/extract → icon + category
+     6. User checks the ones they want, picks a target day, hits Add
+     7. Selected POIs are inserted into the chosen day before its last place
+   ============================================================ */
+
+let guidePois = [];
+const guideSelected = new Set();
+
+$('btn-guide').addEventListener('click', () => {
+  if (!activeTrip) {
+    setStatus('Keine Reise ausgewählt.', 'error');
+    return;
+  }
+  $('guide-input').value = '';
+  $('guide-results').innerHTML =
+    '<div class="guide-loading">Stadt eingeben und auf «Suchen» klicken.</div>';
+  guidePois = [];
+  guideSelected.clear();
+  // Populate day selector
+  const sel = $('guide-day-select');
+  sel.innerHTML = activeTrip.days.map((d, i) =>
+    '<option value="' + i + '">' + esc(d.label) + '</option>'
+  ).join('');
+  $('modal-guide').classList.add('open');
+  setTimeout(() => $('guide-input').focus(), 80);
+});
+
+$('guide-cancel-btn').addEventListener('click', () => {
+  $('modal-guide').classList.remove('open');
+});
+
+$('guide-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doGuideSearch();
+});
+$('guide-search-btn').addEventListener('click', doGuideSearch);
+
+function categorizePoI(title, extract) {
+  const t = (title + ' ' + (extract || '')).toLowerCase();
+  if (/museum|galerie|gallery|ausstellung/.test(t)) return { icon: '🏛️', cat: 'Museum' };
+  if (/kirche|dom|kathedrale|münster|münster|basilika|kloster|abtei|cathedral|church/.test(t)) return { icon: '⛪', cat: 'Kirche' };
+  if (/burg|schloss|palast|festung|castle|palace/.test(t)) return { icon: '🏰', cat: 'Burg / Schloss' };
+  if (/turm|tower/.test(t)) return { icon: '🗼', cat: 'Turm' };
+  if (/park|garten|garden|anlage/.test(t)) return { icon: '🌿', cat: 'Park / Garten' };
+  if (/berg|gipfel|peak|alpe/.test(t)) return { icon: '🏔️', cat: 'Berg' };
+  if (/aussicht|viewpoint|panorama/.test(t)) return { icon: '🔭', cat: 'Aussichtspunkt' };
+  if (/see\b|lake|fluss|river|teich/.test(t)) return { icon: '💧', cat: 'Gewässer' };
+  if (/wasserfall|waterfall/.test(t)) return { icon: '💧', cat: 'Wasserfall' };
+  if (/brücke|bridge/.test(t)) return { icon: '🌉', cat: 'Brücke' };
+  if (/theater|oper|konzert|opera/.test(t)) return { icon: '🎭', cat: 'Kultur' };
+  if (/zoo|tierpark|aquarium/.test(t)) return { icon: '🦁', cat: 'Zoo' };
+  if (/strand|beach/.test(t)) return { icon: '🏖️', cat: 'Strand' };
+  if (/denkmal|memorial|monument/.test(t)) return { icon: '🗿', cat: 'Denkmal' };
+  if (/universität|hochschule|university/.test(t)) return { icon: '🎓', cat: 'Bildung' };
+  if (/rathaus|stadthaus|city hall|town hall/.test(t)) return { icon: '🏛️', cat: 'Rathaus' };
+  if (/markt|market/.test(t)) return { icon: '🛒', cat: 'Markt' };
+  if (/platz|square|piazza/.test(t)) return { icon: '⛲', cat: 'Platz' };
+  return { icon: '⭐', cat: 'Sehenswürdigkeit' };
+}
+
+async function wikipediaGeoSearch(lat, lon, lang) {
+  const url = 'https://' + lang + '.wikipedia.org/w/api.php?' +
+    new URLSearchParams({
+      action: 'query',
+      list: 'geosearch',
+      gscoord: lat + '|' + lon,
+      gsradius: 10000,
+      gslimit: 50,
+      format: 'json',
+      origin: '*',
+    });
+  const res = await fetch(viaProxy(url));
+  if (!res.ok) throw new Error('Wikipedia HTTP ' + res.status);
+  const data = await res.json();
+  return (data.query && data.query.geosearch) || [];
+}
+
+async function wikipediaSummaries(pageIds, lang) {
+  if (!pageIds.length) return {};
+  const url = 'https://' + lang + '.wikipedia.org/w/api.php?' +
+    new URLSearchParams({
+      action: 'query',
+      pageids: pageIds.join('|'),
+      prop: 'extracts|pageimages',
+      exintro: '1',
+      exchars: '220',
+      explaintext: '1',
+      piprop: 'thumbnail',
+      pithumbsize: '80',
+      format: 'json',
+      origin: '*',
+    });
+  const res = await fetch(viaProxy(url));
+  if (!res.ok) return {};
+  const data = await res.json();
+  return (data.query && data.query.pages) || {};
+}
+
+async function doGuideSearch() {
+  const q = $('guide-input').value.trim();
+  if (!q) return;
+
+  $('guide-results').innerHTML =
+    '<div class="guide-loading">⏳ Suche Sehenswürdigkeiten in «' + esc(q) + '»…</div>';
+  guidePois = [];
+  guideSelected.clear();
+
+  try {
+    // Step 1: geocode the city to get coordinates
+    addLog('Reiseführer: Suche Koordinaten für "' + q + '"');
+    const cityCoords = await geocode(q);
+    if (!cityCoords) {
+      $('guide-results').innerHTML =
+        '<div class="guide-loading">Ort «' + esc(q) + '» nicht gefunden.</div>';
+      return;
+    }
+
+    // Step 2: Wikipedia geosearch (German first, then English fallback)
+    let pages = [];
+    let lang = 'de';
+    try {
+      pages = await wikipediaGeoSearch(cityCoords.lat, cityCoords.lon, 'de');
+    } catch (err) {
+      addLog('Reiseführer: DE Wikipedia fehlgeschlagen: ' + err.message, 'warn');
+    }
+    if (!pages.length) {
+      try {
+        pages = await wikipediaGeoSearch(cityCoords.lat, cityCoords.lon, 'en');
+        lang = 'en';
+      } catch (err) {
+        addLog('Reiseführer: EN Wikipedia fehlgeschlagen: ' + err.message, 'warn');
+      }
+    }
+
+    if (!pages.length) {
+      $('guide-results').innerHTML =
+        '<div class="guide-loading">Keine Wikipedia-Artikel in der Region gefunden.</div>';
+      return;
+    }
+    addLog('Reiseführer: ' + pages.length + ' Treffer (' + lang + ')');
+
+    // Step 3: fetch summaries for top results
+    const topPages = pages.slice(0, 40);
+    const pageIds = topPages.map(p => p.pageid);
+    const pageMap = await wikipediaSummaries(pageIds, lang);
+
+    // Step 4: build POI list
+    topPages.forEach(p => {
+      const info = pageMap[p.pageid];
+      if (!info || info.missing !== undefined) return;
+      let extract = (info.extract || '').replace(/\n/g, ' ').trim();
+      // Trim to ~150 chars at sentence boundary
+      if (extract.length > 160) {
+        const cut = extract.indexOf('.', 100);
+        extract = cut > 0 ? extract.substring(0, cut + 1) : extract.substring(0, 160) + '…';
+      }
+      const cat = categorizePoI(p.title, extract);
+      guidePois.push({
+        name: p.title,
+        icon: cat.icon,
+        cat: cat.cat,
+        desc: extract,
+        lat: p.lat,
+        lon: p.lon,
+        thumb: info.thumbnail ? info.thumbnail.source : null,
+      });
+    });
+
+    if (!guidePois.length) {
+      $('guide-results').innerHTML =
+        '<div class="guide-loading">Keine Beschreibungen verfügbar.</div>';
+      return;
+    }
+
+    // Sort by category, then alphabetical
+    guidePois.sort((a, b) =>
+      a.cat.localeCompare(b.cat) || a.name.localeCompare(b.name)
+    );
+    renderGuideResults();
+  } catch (err) {
+    addLog('Reiseführer-Fehler: ' + err.message, 'error');
+    $('guide-results').innerHTML =
+      '<div class="guide-loading">Fehler: ' + esc(err.message) + '</div>';
+  }
+}
+
+function renderGuideResults() {
+  if (!guidePois.length) {
+    $('guide-results').innerHTML = '<div class="guide-loading">Keine Treffer.</div>';
+    return;
+  }
+  $('guide-results').innerHTML = guidePois.map((p, i) => {
+    const sel = guideSelected.has(i) ? ' sel' : '';
+    const thumb = p.thumb
+      ? '<img class="poi-thumb" src="' + esc(p.thumb) + '" alt="" onerror="this.style.display=\'none\'">'
+      : '';
+    return '<div class="poi-item' + sel + '" data-poi="' + i + '">' +
+      '<div class="poi-check">' + (guideSelected.has(i) ? '✓' : '') + '</div>' +
+      '<div style="flex:1;min-width:0">' +
+        '<div class="poi-name">' + p.icon + ' ' + esc(p.name) + '</div>' +
+        '<div class="poi-cat">' + esc(p.cat) + '</div>' +
+        (p.desc ? '<div class="poi-desc">' + esc(p.desc) + '</div>' : '') +
+      '</div>' +
+      thumb +
+    '</div>';
+  }).join('');
+}
+
+$('guide-results').addEventListener('click', e => {
+  const item = e.target.closest('.poi-item');
+  if (!item) return;
+  const i = parseInt(item.dataset.poi);
+  if (guideSelected.has(i)) guideSelected.delete(i);
+  else guideSelected.add(i);
+  renderGuideResults();
+});
+
+$('guide-add-btn').addEventListener('click', () => {
+  if (!activeTrip || !guideSelected.size) {
+    $('modal-guide').classList.remove('open');
+    return;
+  }
+  const di = parseInt($('guide-day-select').value);
+  if (isNaN(di) || !activeTrip.days[di]) {
+    setStatus('Tag nicht gefunden.', 'error');
+    return;
+  }
+  const day = activeTrip.days[di];
+
+  // Insert each selected POI before the last place of the chosen day
+  const selectedArray = [...guideSelected].sort((a, b) => a - b);
+  selectedArray.forEach(i => {
+    const poi = guidePois[i];
+    const lastIdx = day.places.length - 1;
+    const transport = lastIdx > 0 ? day.places[lastIdx - 1].transport : 'driving';
+    day.places.splice(lastIdx, 0, {
+      name: poi.name,
+      transport: transport,
+      _geocoded: { lat: poi.lat, lon: poi.lon, matched: poi.name },
+    });
+    // Save into geocode cache for future
+    geocodeCache[poi.name.toLowerCase()] = { lat: poi.lat, lon: poi.lon };
+  });
+  saveGeocodeCache();
+  saveToStorage();
+  renderDays();
+  $('modal-guide').classList.remove('open');
+  setStatus(selectedArray.length + ' Sehenswürdigkeit(en) zu «' + day.label + '» hinzugefügt.', 'success');
+  scheduleAutoRecalculate();
 });
 
 /* ============================================================
