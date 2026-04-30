@@ -662,6 +662,125 @@ header h1 { font-size: 1.15rem; font-weight: 500; }
 }
 
 /* ============================================================
+   TRIP SETTINGS (date, travellers)
+   ============================================================ */
+.trip-settings {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.trip-settings .ts-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+}
+.trip-settings label {
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+.trip-settings input {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 0.78rem;
+  background: #fff;
+  font-family: inherit;
+}
+.trip-settings input[type="date"] { flex: 1; min-width: 0; }
+.trip-settings input:focus { outline: none; border-color: var(--green-mid); }
+
+/* ============================================================
+   HOTEL SEARCH MODAL
+   ============================================================ */
+.hotel-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 0.78rem;
+  padding: 6px 8px;
+  background: var(--surface-alt);
+  border-radius: 7px;
+  border: 1px solid var(--border);
+}
+.hotel-filter-row label {
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+.hotel-filter-row input,
+.hotel-filter-row select {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 0.78rem;
+  background: #fff;
+  font-family: inherit;
+  width: 60px;
+}
+.hotel-filter-row input:focus,
+.hotel-filter-row select:focus { outline: none; border-color: var(--green-mid); }
+
+.hotel-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: 1.5px solid var(--border);
+  margin-bottom: 5px;
+  background: #fff;
+  transition: all 0.12s;
+}
+.hotel-item:hover { background: #f0faf4; border-color: var(--green-mid); }
+.hotel-item .hotel-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+.hotel-item .hotel-name:hover { color: var(--green-dark); text-decoration: underline; }
+.hotel-item .hotel-meta {
+  font-size: 0.72rem;
+  color: var(--text-soft);
+  line-height: 1.4;
+}
+.hotel-item .hotel-stars { color: #d4a017; letter-spacing: 1px; }
+.hotel-item .hotel-actions {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-top: 3px;
+}
+.hotel-item .hotel-actions a {
+  font-size: 0.72rem;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  text-decoration: none;
+  color: var(--text-soft);
+  background: var(--surface-alt);
+  transition: all 0.12s;
+}
+.hotel-item .hotel-actions a:hover {
+  background: var(--green-dark);
+  color: #fff;
+  border-color: var(--green-dark);
+}
+.hotel-item .hotel-actions a.platform-booking { color: #003580; border-color: #003580; }
+.hotel-item .hotel-actions a.platform-holidaycheck { color: #ee7f00; border-color: #ee7f00; }
+.hotel-item .hotel-actions a.platform-google { color: #4285f4; border-color: #4285f4; }
+.hotel-item .hotel-actions a.platform-booking:hover    { background: #003580; color: #fff; }
+.hotel-item .hotel-actions a.platform-holidaycheck:hover { background: #ee7f00; color: #fff; }
+.hotel-item .hotel-actions a.platform-google:hover     { background: #4285f4; color: #fff; }
+
+/* ============================================================
    MOBILE: BURGER + DRAWER
    ============================================================ */
 
@@ -1050,6 +1169,20 @@ table.report-table tfoot td {
 
     <div class="panel" id="panel-days" style="display:none">
       <div class="panel-title">Reisetage &amp; Orte</div>
+      <div class="trip-settings" id="trip-settings">
+        <div class="ts-row">
+          <label>📅 Start</label>
+          <input type="date" id="ts-startdate" data-ts="startDate">
+        </div>
+        <div class="ts-row">
+          <label>👥 Pers.</label>
+          <input type="number" min="1" max="20" id="ts-adults" data-ts="adults" style="width:38px">
+          <label>+ Kind</label>
+          <input type="number" min="0" max="10" id="ts-children" data-ts="children" style="width:38px">
+          <label>🛏️</label>
+          <input type="number" min="1" max="9" id="ts-rooms" data-ts="rooms" style="width:38px">
+        </div>
+      </div>
       <div id="days-list"></div>
       <div style="display:flex;gap:5px;margin-top:8px;flex-wrap:wrap">
         <button class="btn small ghost" id="btn-add-day">+ 1 Tag</button>
@@ -1161,6 +1294,52 @@ table.report-table tfoot td {
     <div class="modal-actions">
       <button class="btn ghost" id="btn-cancel-add-days">Abbrechen</button>
       <button class="btn solid" id="btn-confirm-add-days">Hinzufügen</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-hotel-search">
+  <div class="modal-box" style="width:560px;max-width:95vw;max-height:88vh;display:flex;flex-direction:column">
+    <h3 style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+      🔎 Hotelsuche
+      <span id="hotel-search-context" style="font-size:0.72rem;color:var(--text-faint);font-weight:normal;flex:1"></span>
+    </h3>
+    <div class="hotel-filter-row">
+      <label>Preis/Nacht:</label>
+      <input type="number" id="hotel-price-min" min="0" step="10" placeholder="min" style="width:60px">
+      <span>–</span>
+      <input type="number" id="hotel-price-max" min="0" step="10" placeholder="max" style="width:60px">
+      <span id="hotel-currency-label">CHF</span>
+      <label style="margin-left:8px">Min. Sterne:</label>
+      <select id="hotel-min-stars" style="width:auto">
+        <option value="0">egal</option>
+        <option value="3">3⭐</option>
+        <option value="4">4⭐</option>
+        <option value="5">5⭐</option>
+      </select>
+      <label style="margin-left:8px">Min. Bewertung:</label>
+      <select id="hotel-min-rating" style="width:auto">
+        <option value="0">egal</option>
+        <option value="60">6.0+</option>
+        <option value="70">7.0+</option>
+        <option value="80">8.0+</option>
+        <option value="90">9.0+</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:8px;flex-shrink:0">
+      <input type="text" class="modal-input" id="hotel-search-input" placeholder="Stadt eingeben…" autocomplete="off" style="flex:1;margin-bottom:0">
+      <button class="btn solid" id="hotel-search-btn">Suchen</button>
+    </div>
+    <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;margin-bottom:8px">
+      <a id="hotel-link-booking" class="btn small" style="border-color:#003580;color:#003580" target="_blank" rel="noopener">📅 Bei Booking suchen</a>
+      <a id="hotel-link-holidaycheck" class="btn small" style="border-color:#ee7f00;color:#ee7f00" target="_blank" rel="noopener">⭐ Bei HolidayCheck</a>
+      <a id="hotel-link-google" class="btn small" style="border-color:#4285f4;color:#4285f4" target="_blank" rel="noopener">🗺️ Google Maps</a>
+    </div>
+    <div id="hotel-results" style="flex:1;overflow-y:auto;min-height:200px;border:1px solid var(--border);border-radius:7px;padding:8px;background:var(--surface-alt)">
+      <div class="guide-loading">Stadt eingeben und auf «Suchen» klicken.</div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-shrink:0">
+      <button class="btn ghost" id="hotel-cancel-btn">Schliessen</button>
     </div>
   </div>
 </div>
@@ -1350,7 +1529,22 @@ function createTrip(name, currency, emoji) {
     emoji: emoji || '🌍',
     days: [createDay('Tag 1')],
     segPrices: {},
+    // Hotel-search defaults — user can edit later in trip settings
+    startDate: '',           // YYYY-MM-DD; if empty, hotel search uses today
+    adults: 2,
+    children: 0,
+    rooms: 1,
   };
+}
+
+/* Helper: compute the calendar date for a given day index based on trip startDate.
+   Returns YYYY-MM-DD string, or null if no startDate set. */
+function getDayDate(dayIdx) {
+  if (!activeTrip || !activeTrip.startDate) return null;
+  const d = new Date(activeTrip.startDate);
+  if (isNaN(d.getTime())) return null;
+  d.setDate(d.getDate() + dayIdx);
+  return d.toISOString().slice(0, 10);
 }
 
 function getSegPrice(dayIdx, segIdx) {
@@ -2394,7 +2588,41 @@ function showTripPanels(show) {
     const p = $(id);
     if (p) p.style.display = show ? '' : 'none';
   });
+  if (show) syncTripSettingsUI();
 }
+
+/* Mirror activeTrip's startDate/adults/children/rooms into the trip-settings UI.
+   Needed because: a) older trips may not have these fields yet, b) when the
+   user switches between trips the inputs must reflect each trip's values. */
+function syncTripSettingsUI() {
+  if (!activeTrip) return;
+  // Backfill defaults for older trips
+  if (typeof activeTrip.adults   !== 'number') activeTrip.adults   = 2;
+  if (typeof activeTrip.children !== 'number') activeTrip.children = 0;
+  if (typeof activeTrip.rooms    !== 'number') activeTrip.rooms    = 1;
+  if (typeof activeTrip.startDate !== 'string') activeTrip.startDate = '';
+
+  $('ts-startdate').value = activeTrip.startDate || '';
+  $('ts-adults').value    = activeTrip.adults;
+  $('ts-children').value  = activeTrip.children;
+  $('ts-rooms').value     = activeTrip.rooms;
+}
+
+// Wire up trip-settings inputs (called once on script init below)
+function bindTripSettings() {
+  ['ts-startdate','ts-adults','ts-children','ts-rooms'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('change', () => {
+      if (!activeTrip) return;
+      const field = el.dataset.ts;
+      const val = el.type === 'number' ? (parseInt(el.value) || 0) : el.value;
+      activeTrip[field] = val;
+      saveToStorage();
+    });
+  });
+}
+bindTripSettings();
 
 /* ============================================================
    DAYS RENDERING
@@ -2461,7 +2689,9 @@ function renderDays() {
       '<span class="form-currency">' + esc(getCurrency()) + '</span>' +
       '<span class="form-label" style="width:40px;margin-left:6px">Nächte</span>' +
       '<input class="form-input narrow" type="number" min="1" max="365" value="' + esc(h.nights || '1') +
-      '" data-day="' + di + '" data-hotel-field="nights"></div></div>';
+      '" data-day="' + di + '" data-hotel-field="nights"></div>' +
+      '<div style="margin-top:6px"><button class="btn small ghost" data-search-hotel="' + di + '" style="width:100%">🔎 Hotel suchen</button></div>' +
+      '</div>';
 
     // Expenses
     const expRowsHtml = day.expenses.length
@@ -2865,10 +3095,19 @@ $('days-list').addEventListener('click', e => {
 
   // Toggle hotel
   const toggleHotel = t.closest('[data-toggle-hotel]');
-  if (toggleHotel && !t.closest('input')) {
+  if (toggleHotel && !t.closest('input') && !t.closest('button')) {
     const di = parseInt(toggleHotel.dataset.toggleHotel);
     activeTrip.days[di].hotel.open = !activeTrip.days[di].hotel.open;
     saveToStorage(); renderDays(); return;
+  }
+
+  // Open hotel search modal for that day
+  const searchHotel = t.closest('[data-search-hotel]');
+  if (searchHotel) {
+    e.preventDefault();
+    const di = parseInt(searchHotel.dataset.searchHotel);
+    openHotelSearch(di);
+    return;
   }
 
   // Toggle expenses (but not when clicking the + button or inputs)
@@ -3015,6 +3254,265 @@ $('btn-calculate').addEventListener('click', () => {
     console.error('Route calc error:', err);
     setStatus('Fehler: ' + err.message, 'error');
   });
+});
+
+/* ============================================================
+   HOTEL SEARCH — OSM-based listing + booking-platform deep links
+   - Pulls hotels in a 3 km radius around the day's main location
+     from OpenStreetMap (Overpass API).
+   - Shows them as cards with optional star rating and contact info.
+   - Each hotel and the global search-buttons open Booking.com,
+     HolidayCheck or Google Maps in a new tab with all the trip
+     parameters (dates, travellers, price range, stars, rating)
+     pre-filled in the URL.
+   ============================================================ */
+
+let hotelSearchContext = { dayIdx: null, query: '', coords: null };
+
+function openHotelSearch(dayIdx) {
+  if (!activeTrip) return;
+  const day = activeTrip.days[dayIdx];
+  if (!day) return;
+
+  hotelSearchContext.dayIdx = dayIdx;
+
+  // Try to derive the search city from the existing places of that day.
+  // Heuristic: take the last place name (typical "stop for the night" location).
+  // If empty, take any non-empty place name from the day.
+  let initialQuery = '';
+  for (let i = day.places.length - 1; i >= 0; i--) {
+    if (day.places[i].name && day.places[i].name.trim()) {
+      initialQuery = day.places[i].name.trim();
+      break;
+    }
+  }
+  $('hotel-search-input').value = initialQuery;
+  $('hotel-currency-label').textContent = getCurrency();
+
+  const dateStr = getDayDate(dayIdx);
+  const dateLabel = dateStr
+    ? new Date(dateStr).toLocaleDateString('de-CH', { day:'2-digit', month:'2-digit', year:'numeric' })
+    : '(kein Datum gesetzt)';
+  $('hotel-search-context').textContent =
+    day.label + ' · ' + (initialQuery || 'Stadt') + ' · ' + dateLabel +
+    ' · ' + (day.hotel.nights || 1) + ' Nacht/Nächte';
+
+  $('hotel-results').innerHTML =
+    '<div class="guide-loading">Stadt eingeben und auf «Suchen» klicken.</div>';
+
+  hotelSearchContext.coords = null;
+  updateHotelLinks();
+  $('modal-hotel-search').classList.add('open');
+  setTimeout(() => $('hotel-search-input').focus(), 80);
+}
+
+$('hotel-cancel-btn').addEventListener('click', () => {
+  $('modal-hotel-search').classList.remove('open');
+});
+$('hotel-search-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doHotelSearch();
+});
+$('hotel-search-btn').addEventListener('click', doHotelSearch);
+// Filters changed → just refresh the deep-link URLs
+['hotel-price-min','hotel-price-max','hotel-min-stars','hotel-min-rating']
+  .forEach(id => $(id).addEventListener('input', updateHotelLinks));
+
+/** Compute the URLs for all three booking platforms based on trip + filter inputs. */
+function buildBookingUrl(query, hotelName) {
+  // https://www.booking.com/searchresults.html?ss=Florenz&checkin=2026-05-15&checkout=2026-05-17&group_adults=2&group_children=0&no_rooms=1&selected_currency=CHF&nflt=price%3DCHF-50-200-1%3Bclass%3D4
+  const di = hotelSearchContext.dayIdx ?? 0;
+  const checkin = getDayDate(di) || '';
+  const day = activeTrip ? activeTrip.days[di] : null;
+  const nights = parseInt(day?.hotel?.nights) || 1;
+  let checkout = '';
+  if (checkin) {
+    const d = new Date(checkin);
+    d.setDate(d.getDate() + nights);
+    checkout = d.toISOString().slice(0, 10);
+  }
+  const adults = parseInt(activeTrip?.adults) || 2;
+  const children = parseInt(activeTrip?.children) || 0;
+  const rooms = parseInt(activeTrip?.rooms) || 1;
+  const cur = getCurrency();
+  const pmin = parseInt($('hotel-price-min').value) || 0;
+  const pmax = parseInt($('hotel-price-max').value) || 0;
+  const stars = parseInt($('hotel-min-stars').value) || 0;
+  const rating = parseInt($('hotel-min-rating').value) || 0;
+
+  const params = new URLSearchParams();
+  params.set('ss', hotelName || query);
+  if (checkin) params.set('checkin', checkin);
+  if (checkout) params.set('checkout', checkout);
+  params.set('group_adults', adults);
+  params.set('group_children', children);
+  params.set('no_rooms', rooms);
+  params.set('selected_currency', cur);
+
+  // Build nflt filter string
+  const filters = [];
+  if (pmin || pmax) {
+    // Booking expects: price=<currency>-<min>-<max>-1
+    filters.push('price=' + cur + '-' + (pmin || 0) + '-' + (pmax || 9999) + '-1');
+  }
+  if (stars >= 3) {
+    // class=3;class=4;class=5 (anything from min upward)
+    const cls = [];
+    for (let s = stars; s <= 5; s++) cls.push('class=' + s);
+    filters.push(cls.join(';'));
+  }
+  if (rating) filters.push('review_score=' + rating);
+  if (filters.length) params.set('nflt', filters.join(';'));
+
+  return 'https://www.booking.com/searchresults.html?' + params.toString();
+}
+
+function buildHolidayCheckUrl(query, hotelName) {
+  // HolidayCheck doesn't expose a stable filter URL — we just open the search page.
+  const q = hotelName || query;
+  return 'https://www.holidaycheck.de/dh/?q=' + encodeURIComponent(q);
+}
+
+function buildGoogleMapsUrl(query, hotelName) {
+  if (hotelName) {
+    // Direct Google Maps search for a specific hotel → opens its profile incl. reviews
+    return 'https://www.google.com/maps/search/?api=1&query=' +
+      encodeURIComponent(hotelName + ' ' + query);
+  }
+  return 'https://www.google.com/maps/search/?api=1&query=' +
+    encodeURIComponent('Hotels in ' + query);
+}
+
+function updateHotelLinks() {
+  const q = $('hotel-search-input').value.trim();
+  if (!q) {
+    ['hotel-link-booking','hotel-link-holidaycheck','hotel-link-google']
+      .forEach(id => $(id).removeAttribute('href'));
+    return;
+  }
+  $('hotel-link-booking').href      = buildBookingUrl(q, null);
+  $('hotel-link-holidaycheck').href = buildHolidayCheckUrl(q, null);
+  $('hotel-link-google').href       = buildGoogleMapsUrl(q, null);
+}
+
+async function doHotelSearch() {
+  const q = $('hotel-search-input').value.trim();
+  if (!q) return;
+  updateHotelLinks();
+
+  $('hotel-results').innerHTML =
+    '<div class="guide-loading">⏳ Suche Hotels in «' + esc(q) + '»…</div>';
+
+  try {
+    const cityCoords = await geocode(q);
+    if (!cityCoords) {
+      $('hotel-results').innerHTML =
+        '<div class="guide-loading">Ort «' + esc(q) + '» nicht gefunden. ' +
+        'Du kannst trotzdem die Such-Buttons oben verwenden.</div>';
+      return;
+    }
+    hotelSearchContext.coords = cityCoords;
+    const hotels = await fetchHotelsFromOSM(cityCoords.lat, cityCoords.lon);
+    if (!hotels.length) {
+      $('hotel-results').innerHTML =
+        '<div class="guide-loading">Keine Hotels in OpenStreetMap im 3-km-Radius gefunden. ' +
+        'Nutze die Such-Buttons oben für Booking/HolidayCheck/Google.</div>';
+      return;
+    }
+    renderHotelResults(hotels, q);
+  } catch (err) {
+    addLog('Hotel-Suche Fehler: ' + err.message, 'error');
+    $('hotel-results').innerHTML =
+      '<div class="guide-loading">Fehler: ' + esc(err.message) + '</div>';
+  }
+}
+
+async function fetchHotelsFromOSM(lat, lon) {
+  // Overpass query: hotels, hostels, guesthouses within ~3km
+  const query = '[out:json][timeout:25];' +
+    '(node["tourism"~"^(hotel|hostel|guest_house|apartment|motel)$"](around:3000,' + lat + ',' + lon + ');' +
+    'way["tourism"~"^(hotel|hostel|guest_house|apartment|motel)$"](around:3000,' + lat + ',' + lon + '););' +
+    'out tags center 60;';
+  addLog('Hotel-Suche: Lade von Overpass…');
+  const res = await fetch(viaProxy('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query)));
+  if (!res.ok) throw new Error('Overpass HTTP ' + res.status);
+  const data = await res.json();
+  const elements = data.elements || [];
+
+  const hotels = elements.map(el => {
+    const tags = el.tags || {};
+    const elLat = el.lat ?? el.center?.lat;
+    const elLon = el.lon ?? el.center?.lon;
+    if (!elLat || !elLon || !tags.name) return null;
+    return {
+      name: tags.name,
+      type: tags.tourism,                    // hotel | hostel | guest_house ...
+      stars: parseInt(tags.stars) || 0,
+      address: [
+        tags['addr:street'],
+        tags['addr:housenumber'],
+        tags['addr:postcode'],
+        tags['addr:city'],
+      ].filter(Boolean).join(' '),
+      phone: tags.phone || tags['contact:phone'] || '',
+      website: tags.website || tags['contact:website'] || '',
+      lat: elLat,
+      lon: elLon,
+    };
+  }).filter(Boolean);
+
+  // Sort: starred first (descending), then alphabetical
+  hotels.sort((a, b) => (b.stars - a.stars) || a.name.localeCompare(b.name));
+  addLog('Hotel-Suche: ' + hotels.length + ' Treffer', 'success');
+  return hotels;
+}
+
+function renderHotelResults(hotels, query) {
+  const typeLabels = {
+    hotel: 'Hotel', hostel: 'Hostel', guest_house: 'Gästehaus',
+    apartment: 'Apartment', motel: 'Motel',
+  };
+  $('hotel-results').innerHTML = hotels.map((h) => {
+    const stars = h.stars > 0 ? '<span class="hotel-stars">' + '⭐'.repeat(h.stars) + '</span> ' : '';
+    const typeLabel = typeLabels[h.type] || h.type;
+    const meta = [typeLabel, h.address].filter(Boolean).join(' · ');
+    const bookingUrl = buildBookingUrl(query, h.name);
+    const hcUrl = buildHolidayCheckUrl(query, h.name);
+    const gmUrl = buildGoogleMapsUrl(query, h.name);
+    return '<div class="hotel-item">' +
+      '<div class="hotel-name" data-hotel-click="' + esc(bookingUrl) + '" title="Klick → Booking.com">' +
+        stars + esc(h.name) + '</div>' +
+      (meta ? '<div class="hotel-meta">' + esc(meta) + '</div>' : '') +
+      '<div class="hotel-actions">' +
+        '<a href="' + esc(bookingUrl) + '" target="_blank" rel="noopener" class="platform-booking">📅 Booking</a>' +
+        '<a href="' + esc(hcUrl) + '" target="_blank" rel="noopener" class="platform-holidaycheck">⭐ HolidayCheck</a>' +
+        '<a href="' + esc(gmUrl) + '" target="_blank" rel="noopener" class="platform-google">🗺️ Google Maps</a>' +
+        '<a href="#" data-use-hotel="' + esc(h.name) + '|' + h.lat + '|' + h.lon + '|' +
+          esc(h.address) + '" style="border-color:var(--green-mid);color:var(--green-mid)">✓ Übernehmen</a>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// Click on hotel name → open Booking.com in new tab
+$('hotel-results').addEventListener('click', e => {
+  const useBtn = e.target.closest('[data-use-hotel]');
+  if (useBtn) {
+    e.preventDefault();
+    const di = hotelSearchContext.dayIdx;
+    if (di == null || !activeTrip) return;
+    const [name, lat, lon, address] = useBtn.dataset.useHotel.split('|');
+    activeTrip.days[di].hotel.name = name;
+    activeTrip.days[di].hotel.open = true;
+    saveToStorage();
+    renderDays();
+    $('modal-hotel-search').classList.remove('open');
+    setStatus('«' + name + '» als Hotel für Tag ' + (di + 1) + ' übernommen.', 'success');
+    return;
+  }
+  const nameEl = e.target.closest('[data-hotel-click]');
+  if (nameEl) {
+    window.open(nameEl.dataset.hotelClick, '_blank', 'noopener');
+  }
 });
 
 /* ============================================================
