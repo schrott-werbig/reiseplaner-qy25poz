@@ -1366,8 +1366,9 @@ table.report-table tfoot td {
         <span style="font-size:0.78rem;color:var(--text-soft)">Zu Tag:</span>
         <select class="modal-input" id="guide-day-select" style="margin-bottom:0;padding:5px 8px;width:auto;font-size:0.82rem"></select>
       </div>
-      <div style="display:flex;gap:6px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn ghost" id="guide-cancel-btn">Schliessen</button>
+        <button class="btn" id="guide-show-on-map-btn" style="border-color:#1a6b8a;color:#1a6b8a">🗺️ Auf Karte zeigen</button>
         <button class="btn solid" id="guide-add-btn">Ausgewählte hinzufügen</button>
       </div>
     </div>
@@ -1465,6 +1466,7 @@ let selectedEmoji = '🌍';
 let mapReady = false;
 let map = null;
 let routeLayer = null;
+let poiLayer = null;
 
 /* ============================================================
    LIBRARY CHECKS
@@ -1727,6 +1729,7 @@ function initMap() {
       maxZoom: 20,
     }).addTo(map);
     routeLayer = L.layerGroup().addTo(map);
+    poiLayer = L.layerGroup().addTo(map);
     mapReady = true;
   } catch (e) {
     console.error('Map init failed:', e);
@@ -2124,6 +2127,35 @@ async function calcSegment(from, to, mode) {
 const RAIL_MAX_DIST_KM = 600;     // skip Overpass for very long trips
 const RAIL_AVG_SPEED_KMH = 100;   // typical train cruising speed
 
+/* Try multiple Overpass mirrors. Returns parsed JSON or throws. */
+const OVERPASS_MIRRORS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.openstreetmap.fr/api/interpreter',
+  'https://overpass.openstreetmap.ru/cgi/interpreter',
+];
+
+async function overpassQuery(query, label) {
+  const tag = label || 'Overpass';
+  for (let i = 0; i < OVERPASS_MIRRORS.length; i++) {
+    const mirror = OVERPASS_MIRRORS[i];
+    const url = mirror + '?data=' + encodeURIComponent(query);
+    try {
+      const res = await fetch(viaProxy(url));
+      if (!res.ok) {
+        addLog('  ' + tag + ' Mirror ' + (i+1) + ': HTTP ' + res.status, 'warn');
+        continue;
+      }
+      const data = await res.json();
+      if (i > 0) addLog('  ' + tag + ': Mirror ' + (i+1) + ' erfolgreich', 'success');
+      return data;
+    } catch (err) {
+      addLog('  ' + tag + ' Mirror ' + (i+1) + ': ' + err.message, 'warn');
+    }
+  }
+  throw new Error('Alle Overpass-Server nicht erreichbar (alle ' + OVERPASS_MIRRORS.length + ' Mirrors)');
+}
+
 async function fetchRailRoute(from, to) {
   const directKm = haversine(from.lat, from.lon, to.lat, to.lon);
   if (directKm > RAIL_MAX_DIST_KM) {
@@ -2149,12 +2181,7 @@ async function fetchRailRoute(from, to) {
   addLog('  Lade Schienennetz von Overpass…');
   let data;
   try {
-    const res = await fetch(viaProxy('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query)));
-    if (!res.ok) {
-      addLog('  Overpass: HTTP ' + res.status, 'warn');
-      return null;
-    }
-    data = await res.json();
+    data = await overpassQuery(query, 'Schienen');
   } catch (err) {
     addLog('  Overpass-Fehler: ' + err.message, 'warn');
     return null;
@@ -3367,9 +3394,12 @@ function buildBookingUrl(query, hotelName) {
 }
 
 function buildHolidayCheckUrl(query, hotelName) {
-  // HolidayCheck doesn't expose a stable filter URL — we just open the search page.
-  const q = hotelName || query;
-  return 'https://www.holidaycheck.de/dh/?q=' + encodeURIComponent(q);
+  // HolidayCheck's old /dh/?q= search endpoint returns 404 nowadays and they
+  // don't expose a stable text-search URL. We route through Google with a
+  // site:holidaycheck.de filter so the user lands on the right HC page.
+  const q = hotelName ? (hotelName + ' ' + query) : ('Hotel ' + query);
+  return 'https://www.google.com/search?q=' +
+    encodeURIComponent('site:holidaycheck.de ' + q);
 }
 
 function buildGoogleMapsUrl(query, hotelName) {
@@ -3433,9 +3463,7 @@ async function fetchHotelsFromOSM(lat, lon) {
     'way["tourism"~"^(hotel|hostel|guest_house|apartment|motel)$"](around:3000,' + lat + ',' + lon + '););' +
     'out tags center 60;';
   addLog('Hotel-Suche: Lade von Overpass…');
-  const res = await fetch(viaProxy('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query)));
-  if (!res.ok) throw new Error('Overpass HTTP ' + res.status);
-  const data = await res.json();
+  const data = await overpassQuery(query, 'Hotels');
   const elements = data.elements || [];
 
   const hotels = elements.map(el => {
@@ -3541,6 +3569,7 @@ $('btn-guide').addEventListener('click', () => {
     '<div class="guide-loading">Stadt eingeben und auf «Suchen» klicken.</div>';
   guidePois = [];
   guideSelected.clear();
+  clearPoIMarkers();   // remove any old POI markers from the map
   // Populate day selector
   const sel = $('guide-day-select');
   sel.innerHTML = activeTrip.days.map((d, i) =>
@@ -3749,12 +3778,15 @@ $('guide-add-btn').addEventListener('click', () => {
     setStatus('Tag nicht gefunden.', 'error');
     return;
   }
-  const day = activeTrip.days[di];
+  addPoIsToDay([...guideSelected].map(i => guidePois[i]), di);
+  $('modal-guide').classList.remove('open');
+});
 
-  // Insert each selected POI before the last place of the chosen day
-  const selectedArray = [...guideSelected].sort((a, b) => a - b);
-  selectedArray.forEach(i => {
-    const poi = guidePois[i];
+/* Insert a list of POIs into a given day, before the last place. */
+function addPoIsToDay(pois, di) {
+  if (!activeTrip || !activeTrip.days[di] || !pois.length) return;
+  const day = activeTrip.days[di];
+  pois.forEach(poi => {
     const lastIdx = day.places.length - 1;
     const transport = lastIdx > 0 ? day.places[lastIdx - 1].transport : 'driving';
     day.places.splice(lastIdx, 0, {
@@ -3762,15 +3794,95 @@ $('guide-add-btn').addEventListener('click', () => {
       transport: transport,
       _geocoded: { lat: poi.lat, lon: poi.lon, matched: poi.name },
     });
-    // Save into geocode cache for future
     geocodeCache[poi.name.toLowerCase()] = { lat: poi.lat, lon: poi.lon };
   });
   saveGeocodeCache();
   saveToStorage();
   renderDays();
-  $('modal-guide').classList.remove('open');
-  setStatus(selectedArray.length + ' Sehenswürdigkeit(en) zu «' + day.label + '» hinzugefügt.', 'success');
+  setStatus(pois.length + ' Sehenswürdigkeit(en) zu «' + day.label + '» hinzugefügt.', 'success');
   scheduleAutoRecalculate();
+}
+
+/* "Show on map" — close the modal and place a marker for each POI on the
+   main Leaflet map. Each marker has a popup with description and a button
+   to add the POI directly to a chosen day. */
+$('guide-show-on-map-btn').addEventListener('click', () => {
+  if (!guidePois.length) {
+    setStatus('Zuerst nach Sehenswürdigkeiten suchen.', 'warn');
+    return;
+  }
+  if (!checkLeaflet()) {
+    setStatus('Karten nicht verfügbar – Internet prüfen.', 'error');
+    $('modal-guide').classList.remove('open');
+    return;
+  }
+  $('modal-guide').classList.remove('open');
+  showPoIsOnMap(guidePois);
+});
+
+function clearPoIMarkers() {
+  if (poiLayer) poiLayer.clearLayers();
+}
+
+function showPoIsOnMap(pois) {
+  if (!mapReady || !poiLayer) return;
+  poiLayer.clearLayers();
+
+  const bounds = [];
+  pois.forEach((poi, idx) => {
+    bounds.push([poi.lat, poi.lon]);
+    const icon = L.divIcon({
+      className: 'poi-map-marker',
+      iconSize: [30, 30],
+      iconAnchor: [15, 15],
+      html: '<div style="background:#d4622a;color:#fff;border:2px solid #fff;' +
+        'border-radius:50%;width:30px;height:30px;display:flex;align-items:center;' +
+        'justify-content:center;font-size:14px;box-shadow:0 1px 5px rgba(0,0,0,.4);' +
+        'cursor:pointer;">' + poi.icon + '</div>'
+    });
+    const marker = L.marker([poi.lat, poi.lon], { icon, zIndexOffset: 500 }).addTo(poiLayer);
+
+    // Build popup HTML with day-selector + add-button
+    const dayOpts = activeTrip.days.map((d, i) =>
+      '<option value="' + i + '">' + esc(d.label) + '</option>'
+    ).join('');
+    const thumb = poi.thumb
+      ? '<img src="' + esc(poi.thumb) + '" alt="" style="width:100%;max-width:200px;border-radius:6px;margin-top:4px" onerror="this.style.display=\'none\'">'
+      : '';
+    const desc = poi.desc ? '<div style="font-size:0.78rem;color:#555;margin:6px 0 4px;line-height:1.4">' + esc(poi.desc) + '</div>' : '';
+    const html =
+      '<div style="min-width:180px;max-width:240px">' +
+      '<div style="font-size:0.92rem;font-weight:700;margin-bottom:1px">' + poi.icon + ' ' + esc(poi.name) + '</div>' +
+      '<div style="font-size:0.7rem;color:#888;margin-bottom:4px">' + esc(poi.cat) + '</div>' +
+      desc + thumb +
+      '<div style="display:flex;gap:4px;align-items:center;margin-top:8px;flex-wrap:wrap">' +
+        '<select class="poi-popup-day" data-poi-idx="' + idx + '" style="font-size:0.75rem;padding:3px 5px;flex:1;min-width:80px">' + dayOpts + '</select>' +
+        '<button class="btn small solid poi-popup-add" data-poi-idx="' + idx + '" style="padding:3px 8px;font-size:0.72rem">+ Hinzufügen</button>' +
+      '</div>' +
+      '</div>';
+    marker.bindPopup(html, { maxWidth: 260 });
+  });
+
+  if (bounds.length) {
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+  }
+  setStatus(pois.length + ' Sehenswürdigkeiten auf der Karte. Klick auf einen Marker für Details.', 'success');
+}
+
+/* Wire up the "Add" button inside POI popups (delegated, since popups are
+   created on demand and aren't in the DOM until opened). */
+document.addEventListener('click', e => {
+  const addBtn = e.target.closest('.poi-popup-add');
+  if (!addBtn) return;
+  const idx = parseInt(addBtn.dataset.poiIdx);
+  const poi = guidePois[idx];
+  if (!poi) return;
+  // Find the matching <select> in the same popup
+  const popup = addBtn.closest('.leaflet-popup-content');
+  const select = popup ? popup.querySelector('.poi-popup-day') : null;
+  const di = select ? parseInt(select.value) : 0;
+  addPoIsToDay([poi], di);
+  if (map) map.closePopup();
 });
 
 /* ============================================================
