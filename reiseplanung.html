@@ -467,6 +467,36 @@ header h1 { font-size: 1.15rem; font-weight: 500; }
 .legend-row { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
 .legend-line { width: 18px; height: 3px; border-radius: 2px; flex-shrink: 0; }
 
+/* Toggle button to show/hide POI markers on the main map.
+   Sits below the legend in the top-right corner; hidden until POIs exist. */
+#btn-toggle-pois {
+  position: absolute;
+  top: 10px; left: 10px;
+  z-index: 500;
+  background: #fff;
+  border: 1.5px solid #d4622a;
+  color: #d4622a;
+  border-radius: 8px;
+  padding: 6px 11px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s;
+}
+#btn-toggle-pois:hover {
+  background: #d4622a;
+  color: #fff;
+}
+#btn-toggle-pois.hidden-pois {
+  background: #d4622a;
+  color: #fff;
+  opacity: 0.85;
+}
+
 /* ============================================================
    TABLE
    ============================================================ */
@@ -1217,6 +1247,10 @@ table.report-table tfoot td {
   <main id="main">
     <div id="map"></div>
     <div id="map-legend"></div>
+    <button id="btn-toggle-pois" title="Sehenswürdigkeiten ausblenden" style="display:none">
+      <span id="poi-toggle-icon">🔭</span>
+      <span id="poi-toggle-text">Sehenswürdigkeiten ausblenden</span>
+    </button>
     <div id="divider"><span>⠿</span></div>
     <div id="table-pane">
       <div class="table-header-bar">
@@ -3822,11 +3856,18 @@ $('guide-show-on-map-btn').addEventListener('click', () => {
 
 function clearPoIMarkers() {
   if (poiLayer) poiLayer.clearLayers();
+  const btn = $('btn-toggle-pois');
+  if (btn) btn.style.display = 'none';
 }
+
+/* Stash for hidden markers so we can restore them when the user toggles
+   visibility back on (instead of having to re-do the whole search). */
+let poiMarkersHidden = false;
 
 function showPoIsOnMap(pois) {
   if (!mapReady || !poiLayer) return;
   poiLayer.clearLayers();
+  poiMarkersHidden = false;
 
   const bounds = [];
   pois.forEach((poi, idx) => {
@@ -3842,7 +3883,6 @@ function showPoIsOnMap(pois) {
     });
     const marker = L.marker([poi.lat, poi.lon], { icon, zIndexOffset: 500 }).addTo(poiLayer);
 
-    // Build popup HTML with day-selector + add-button
     const dayOpts = activeTrip.days.map((d, i) =>
       '<option value="' + i + '">' + esc(d.label) + '</option>'
     ).join('');
@@ -3866,8 +3906,38 @@ function showPoIsOnMap(pois) {
   if (bounds.length) {
     map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
   }
+
+  // Show the toggle button so user can hide/restore markers
+  const btn = $('btn-toggle-pois');
+  if (btn) {
+    btn.style.display = 'flex';
+    btn.classList.remove('hidden-pois');
+    $('poi-toggle-icon').textContent = '🔭';
+    $('poi-toggle-text').textContent = 'Sehenswürdigkeiten ausblenden';
+  }
+
   setStatus(pois.length + ' Sehenswürdigkeiten auf der Karte. Klick auf einen Marker für Details.', 'success');
 }
+
+/* Toggle button: hide markers from view but keep them in memory so we can
+   bring them back on next click. */
+$('btn-toggle-pois').addEventListener('click', () => {
+  if (!poiLayer || !map) return;
+  const btn = $('btn-toggle-pois');
+  if (poiMarkersHidden) {
+    poiLayer.addTo(map);
+    btn.classList.remove('hidden-pois');
+    $('poi-toggle-icon').textContent = '🔭';
+    $('poi-toggle-text').textContent = 'Sehenswürdigkeiten ausblenden';
+    poiMarkersHidden = false;
+  } else {
+    map.removeLayer(poiLayer);
+    btn.classList.add('hidden-pois');
+    $('poi-toggle-icon').textContent = '👁️';
+    $('poi-toggle-text').textContent = 'Sehenswürdigkeiten anzeigen';
+    poiMarkersHidden = true;
+  }
+});
 
 /* Wire up the "Add" button inside POI popups (delegated, since popups are
    created on demand and aren't in the DOM until opened). */
