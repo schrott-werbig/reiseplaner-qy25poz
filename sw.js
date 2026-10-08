@@ -9,7 +9,7 @@
  * Hintergrund aktuell gehalten wenn Internet da ist.
  */
 
-const CACHE_VERSION = 'reiseplaner-v4';
+const CACHE_VERSION = 'reiseplaner-v5';
 
 // Eigene Dateien die immer gecached werden sollen
 const APP_FILES = [

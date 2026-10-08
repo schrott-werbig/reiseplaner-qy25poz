@@ -1806,15 +1806,28 @@ function renderMarkersWithFanOut(specs) {
       return;
     }
 
-    // Multiple stops here → fan them out on a circle around the home dot.
-    // We draw the badges in screen (pixel) space so they stay evenly spaced
-    // regardless of zoom level, then convert back to lat/lon.
+    // Multiple stops here → fan them out around the home dot in screen
+    // (pixel) space so spacing is even at any zoom.
     const centerLatLng = L.latLng(cluster.lat, cluster.lon);
     const centerPt = map.latLngToLayerPoint(centerLatLng);
-    const RADIUS_PX = 32;      // distance from home dot to each badge
-    const angleStep = (2 * Math.PI) / items.length;
-    // Start at the top (12 o'clock) and go clockwise
-    const startAngle = -Math.PI / 2;
+    const RADIUS_PX = 32;
+
+    // Layout per cluster size:
+    //   2 stops → side by side (3 and 9 o'clock) so they don't cover
+    //             the city label above or route label below
+    //   3+ stops → full circle, slightly rotated per-cluster so different
+    //              clusters don't all look identical
+    let startAngle, angleStep;
+    if (items.length === 2) {
+      startAngle = 0;                          // 3 o'clock
+      angleStep = Math.PI;                     // 180° → second at 9 o'clock
+    } else {
+      // Small deterministic rotation per cluster so neighbouring clusters
+      // of the same size don't visually mirror each other.
+      const rotSeed = Math.round((cluster.lat + cluster.lon) * 100);
+      startAngle = -Math.PI / 2 + ((rotSeed % 7) * Math.PI / 14);
+      angleStep = (2 * Math.PI) / items.length;
+    }
 
     // Draw a small "home" dot at the real coordinates so the user still
     // sees where the stops actually are
