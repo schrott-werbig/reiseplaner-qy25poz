@@ -1757,10 +1757,11 @@ function initMap() {
   }
   try {
     map = L.map('map', { zoomControl: true }).setView([46.8, 8.3], 7);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      attribution: '© OpenStreetMap contributors © CARTO',
-      subdomains: 'abcd',
-      maxZoom: 20,
+    // Primary tile source: OpenStreetMap Standard (free, no API key).
+    // CartoDB tiles now require an API key, so we moved off them in 2026-10.
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors',
+      maxZoom: 19,
     }).addTo(map);
     routeLayer = L.layerGroup().addTo(map);
     poiLayer = L.layerGroup().addTo(map);
@@ -4180,9 +4181,8 @@ async function renderMiniMap(container, computedDay, allBounds) {
     keyboard: false,
     tap: false,
   });
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-    subdomains: 'abcd',
-    maxZoom: 18,
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
   }).addTo(miniMap);
 
   const segLayer = L.layerGroup().addTo(miniMap);
