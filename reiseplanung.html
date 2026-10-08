@@ -1501,6 +1501,8 @@ let mapReady = false;
 let map = null;
 let routeLayer = null;
 let poiLayer = null;
+let markerLayer = null;         // numbered stop badges (re-clustered on zoom)
+let currentStopSpecs = [];      // stops of the last calculation
 
 /* ============================================================
    LIBRARY CHECKS
@@ -1764,7 +1766,9 @@ function initMap() {
       maxZoom: 19,
     }).addTo(map);
     routeLayer = L.layerGroup().addTo(map);
+    markerLayer = L.layerGroup().addTo(map);
     poiLayer = L.layerGroup().addTo(map);
+    map.on('zoomend', renderStopMarkers);
     mapReady = true;
   } catch (e) {
     console.error('Map init failed:', e);
@@ -1774,108 +1778,160 @@ function initMap() {
 
 function clearMap() {
   if (mapReady && routeLayer) routeLayer.clearLayers();
+  if (mapReady && markerLayer) markerLayer.clearLayers();
+  currentStopSpecs = [];
   const leg = $('map-legend');
   if (leg) { leg.style.display = 'none'; leg.innerHTML = ''; }
 }
 
 /* ============================================================
-   MARKER FAN-OUT
-   When two or more waypoints share the (nearly) same location, their
-   number badges would overlap and the user can't read them. We cluster
-   waypoints that share a location, keep a single "home dot" at the real
-   coordinates, and fan the numbered badges out around that dot with
-   short leader lines so each number is readable.
+   NUMBERED STOP BADGES — collision-aware
+   Stops whose badges would overlap on screen at the current zoom are
+   merged into ONE capsule badge that lists every number in its own day
+   colour, e.g. [ 4 | 5 ] where day 1 ends and day 2 starts. The badge
+   sits exactly on the place (no offsets, no leader lines). Clustering
+   is redone on every zoom, so nearby-but-distinct stops separate again
+   as soon as there is room; clicking such a merged badge zooms in.
    ============================================================ */
-function renderMarkersWithFanOut(specs) {
-  if (!mapReady || !routeLayer || !specs.length) return;
 
-  // Cluster by rounded coordinates (~11 m precision at 5 decimals).
-  // Two stops within that distance count as "same location" for fan-out.
-  const clusters = new Map();
-  specs.forEach(s => {
-    const key = s.lat.toFixed(4) + '|' + s.lon.toFixed(4);
-    if (!clusters.has(key)) clusters.set(key, { lat: s.lat, lon: s.lon, items: [] });
-    clusters.get(key).items.push(s);
+/* Visual metrics for a badge of the given outer height (px). */
+function badgeMetrics(size) {
+  const border = size >= 24 ? 2.5 : 2;
+  return {
+    size,
+    border,
+    inner: size - 2 * border,
+    gap: 1.5,                                   // white divider between numbers
+    font: size >= 26 ? 11 : size >= 22 ? 10 : 9,
+    perRow: 4,                                  // long capsules wrap into rows
+    shadow: size >= 24 ? '0 2px 8px rgba(0,0,0,.3)' : '0 1px 4px rgba(0,0,0,.3)',
+  };
+}
+
+/* Width of one number cell: square for 1–2 digits, wider for 3+. */
+function badgeCellWidth(members, m) {
+  const maxDigits = Math.max(...members.map(s => String(s.num).length));
+  return m.inner + Math.max(0, maxDigits - 2) * Math.round(m.font * 0.6);
+}
+
+/* Grid of a badge: one row up to `perRow` numbers, then balanced rows
+   (5 → 3+2, 6 → 3+3, 7 → 4+3, 9 → 3+3+3). */
+function badgeGrid(n, m) {
+  const rows = Math.ceil(n / m.perRow);
+  return { rows, cols: Math.ceil(n / rows) };
+}
+
+/* Outer size of a badge holding `members`. */
+function badgeBox(members, m) {
+  const { rows, cols } = badgeGrid(members.length, m);
+  const cell = badgeCellWidth(members, m);
+  return {
+    w: cols * cell + (cols - 1) * m.gap + 2 * m.border,
+    h: rows * m.inner + (rows - 1) * m.gap + 2 * m.border,
+  };
+}
+
+/* Group stops whose badges would overlap at the map's current zoom:
+   merge overlapping boxes (centred on their members' centroid) until
+   no two badges touch any more. */
+function clusterStopBadges(targetMap, specs, m) {
+  const MIN_GAP = 2;     // px of air required between two separate badges
+  const clusters = specs.map(s => {
+    const p = targetMap.latLngToLayerPoint([s.lat, s.lon]);
+    return { members: [s], sx: p.x, sy: p.y };
   });
-
-  clusters.forEach(cluster => {
-    const items = cluster.items;
-    if (items.length === 1) {
-      // Single stop at this location — regular marker, no fan-out
-      drawNumberMarker(cluster.lat, cluster.lon, items[0]);
-      return;
+  const rect = c => {
+    const n = c.members.length;
+    const { w, h } = badgeBox(c.members, m);
+    const cx = c.sx / n, cy = c.sy / n;
+    return { l: cx - w / 2, r: cx + w / 2, t: cy - h / 2, b: cy + h / 2 };
+  };
+  let merged = true;
+  while (merged) {
+    merged = false;
+    for (let i = 0; i < clusters.length && !merged; i++) {
+      const a = rect(clusters[i]);
+      for (let j = i + 1; j < clusters.length; j++) {
+        const b = rect(clusters[j]);
+        if (a.l < b.r + MIN_GAP && b.l < a.r + MIN_GAP &&
+            a.t < b.b + MIN_GAP && b.t < a.b + MIN_GAP) {
+          clusters[i].members.push(...clusters[j].members);
+          clusters[i].sx += clusters[j].sx;
+          clusters[i].sy += clusters[j].sy;
+          clusters.splice(j, 1);
+          merged = true;
+          break;
+        }
+      }
     }
-
-    // Multiple stops here → fan them out around the home dot in screen
-    // (pixel) space so spacing is even at any zoom.
-    const centerLatLng = L.latLng(cluster.lat, cluster.lon);
-    const centerPt = map.latLngToLayerPoint(centerLatLng);
-    const RADIUS_PX = 32;
-
-    // Layout per cluster size:
-    //   2 stops → side by side (3 and 9 o'clock) so they don't cover
-    //             the city label above or route label below
-    //   3+ stops → full circle, slightly rotated per-cluster so different
-    //              clusters don't all look identical
-    let startAngle, angleStep;
-    if (items.length === 2) {
-      startAngle = 0;                          // 3 o'clock
-      angleStep = Math.PI;                     // 180° → second at 9 o'clock
-    } else {
-      // Small deterministic rotation per cluster so neighbouring clusters
-      // of the same size don't visually mirror each other.
-      const rotSeed = Math.round((cluster.lat + cluster.lon) * 100);
-      startAngle = -Math.PI / 2 + ((rotSeed % 7) * Math.PI / 14);
-      angleStep = (2 * Math.PI) / items.length;
-    }
-
-    // Draw a small "home" dot at the real coordinates so the user still
-    // sees where the stops actually are
-    L.circleMarker(centerLatLng, {
-      radius: 4,
-      color: '#2d6a4f',
-      fillColor: '#2d6a4f',
-      fillOpacity: 1,
-      weight: 2,
-      opacity: 1,
-    }).addTo(routeLayer).bindTooltip(
-      items.map(it => it.num + '. ' + it.label).join('<br>'),
-      { direction: 'top' }
-    );
-
-    items.forEach((item, i) => {
-      const angle = startAngle + i * angleStep;
-      const px = centerPt.x + Math.cos(angle) * RADIUS_PX;
-      const py = centerPt.y + Math.sin(angle) * RADIUS_PX;
-      const badgeLatLng = map.layerPointToLatLng(L.point(px, py));
-
-      // Leader line from home dot to the badge
-      L.polyline([centerLatLng, badgeLatLng], {
-        color: item.color,
-        weight: 1.5,
-        opacity: 0.75,
-        interactive: false,
-      }).addTo(routeLayer);
-
-      drawNumberMarker(badgeLatLng.lat, badgeLatLng.lng, item);
-    });
+  }
+  return clusters.map(c => {
+    const n = c.members.length;
+    c.members.sort((a, b) => a.num - b.num);
+    return {
+      latlng: targetMap.layerPointToLatLng(L.point(c.sx / n, c.sy / n)),
+      members: c.members,
+    };
   });
 }
 
-function drawNumberMarker(lat, lon, spec) {
-  const icon = L.divIcon({
-    className: '',
-    iconSize: [26, 26],
-    iconAnchor: [13, 13],
-    html: '<div style="background:' + spec.color +
-      ';color:#fff;border-radius:50%;width:26px;height:26px;' +
-      'display:flex;align-items:center;justify-content:center;' +
-      'font-size:11px;font-weight:700;border:2.5px solid #fff;' +
-      'box-shadow:0 2px 8px rgba(0,0,0,.3);">' + spec.num + '</div>',
+/* HTML of one badge: a circle for a single stop, a capsule for several. */
+function stopBadgeHtml(members, m) {
+  const n = members.length;
+  const { w, h } = badgeBox(members, m);
+  const cell = badgeCellWidth(members, m);
+  const radius = badgeGrid(n, m).rows === 1 ? h / 2 : 9;
+  const outer =
+    'position:absolute;left:0;top:0;transform:translate(-50%,-50%);' +
+    'box-sizing:border-box;width:' + w + 'px;height:' + h + 'px;' +
+    'border:' + m.border + 'px solid #fff;border-radius:' + radius + 'px;' +
+    'background:#fff;overflow:hidden;box-shadow:' + m.shadow + ';' +
+    'display:flex;flex-wrap:wrap;justify-content:center;align-content:center;' +
+    'gap:' + m.gap + 'px;';
+  const cells = members.map(s =>
+    // flex-grow lets a shorter last row fill the width (no white corners)
+    '<span style="flex:1 0 ' + cell + 'px;height:' + m.inner + 'px;' +
+    'background:' + s.color + ';color:#fff;font-size:' + m.font + 'px;' +
+    'font-weight:700;line-height:1;display:flex;align-items:center;' +
+    'justify-content:center;">' + s.num + '</span>'
+  ).join('');
+  return '<div style="' + outer + '">' + cells + '</div>';
+}
+
+/* Draw all stop badges of `specs` onto `layer` of `targetMap`.
+   specs: [{ num, lat, lon, color, label }] */
+function drawStopBadges(targetMap, layer, specs, size, interactive) {
+  const m = badgeMetrics(size);
+  clusterStopBadges(targetMap, specs, m).forEach(({ latlng, members }) => {
+    const { h } = badgeBox(members, m);
+    const icon = L.divIcon({
+      className: '',
+      iconSize: null,           // badge sizes itself, centred via CSS transform
+      iconAnchor: [0, 0],
+      html: stopBadgeHtml(members, m),
+    });
+    const marker = L.marker(latlng, { icon, interactive, keyboard: false }).addTo(layer);
+    if (!interactive) return;
+
+    const places = new Set(members.map(s => s.lat.toFixed(5) + ',' + s.lon.toFixed(5)));
+    let tip = members.map(s => '<b>' + s.num + '.</b> ' + esc(s.label)).join('<br>');
+    if (places.size > 1) {
+      tip += '<br><span style="color:#888">🔍 Klicken zum Hineinzoomen</span>';
+      marker.on('click', () => {
+        targetMap.fitBounds(L.latLngBounds(members.map(s => [s.lat, s.lon])),
+          { padding: [80, 80], maxZoom: 17 });
+      });
+    }
+    marker.bindTooltip(tip, { direction: 'top', offset: [0, -h / 2 - 2] });
   });
-  L.marker([lat, lon], { icon })
-    .addTo(routeLayer)
-    .bindTooltip('<b>' + spec.num + '. ' + esc(spec.label) + '</b>');
+}
+
+/* Main map: (re)draw the numbered stops of the last calculation.
+   Called after each calculation and on every zoom change. */
+function renderStopMarkers() {
+  if (!mapReady || !markerLayer) return;
+  markerLayer.clearLayers();
+  if (currentStopSpecs.length) drawStopBadges(map, markerLayer, currentStopSpecs, 26, true);
 }
 
 function renderMapLegend() {
@@ -2452,7 +2508,7 @@ async function calculateRoute() {
   const allBounds = [];
   let globalMarkerIdx = 0;
   const skippedPlaces = [];
-  const allMarkerSpecs = [];   // collected across all days, fanned out at the end
+  const allMarkerSpecs = [];   // collected across all days, drawn at the end
 
   for (let di = 0; di < activeTrip.days.length; di++) {
     const day = activeTrip.days[di];
@@ -2534,8 +2590,8 @@ async function calculateRoute() {
         globalMarkerIdx++;
         const isFirst = globalMarkerIdx === 1;
         const markerCol = isFirst ? '#2d6a4f' : color;
-        // Collect first; we draw them with fan-out after all days are processed
-        // so stops at the same location get separated into a visible row.
+        // Collected for all days first; drawn afterwards so stops at the
+        // same place can be merged into one badge.
         allMarkerSpecs.push({
           num: globalMarkerIdx,
           lat: c.lat,
@@ -2570,8 +2626,9 @@ async function calculateRoute() {
   }
 
   if (mapReady) {
+    currentStopSpecs = allMarkerSpecs;
     try { map.fitBounds(allBounds, { padding: [50, 50] }); } catch {}
-    renderMarkersWithFanOut(allMarkerSpecs);
+    renderStopMarkers();   // zoomend re-renders again once the zoom animation ends
     renderMapLegend();
   }
   renderTable();
@@ -4300,22 +4357,16 @@ async function renderMiniMap(container, computedDay, allBounds) {
         L.polyline(seg.polyPts, opts).addTo(segLayer);
       }
     });
-    // Draw markers for that day
-    computedDay.bounds.forEach((latlon, i) => {
-      const icon = L.divIcon({
-        className: '',
-        iconSize: [22, 22],
-        iconAnchor: [11, 11],
-        html: '<div style="background:' + computedDay.color +
-          ';color:#fff;border-radius:50%;width:22px;height:22px;display:flex;' +
-          'align-items:center;justify-content:center;font-size:10px;font-weight:700;' +
-          'border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);">' + (i+1) + '</div>'
-      });
-      L.marker(latlon, { icon }).addTo(segLayer);
-    });
+    // Fit first (synchronous on a fresh map), then draw the badges so they
+    // are merged at the final zoom level.
     miniMap.fitBounds(computedDay.bounds, { padding: [20, 20] });
+    const daySpecs = computedDay.bounds.map((ll, i) => ({
+      num: i + 1, lat: ll[0], lon: ll[1], color: computedDay.color, label: '',
+    }));
+    drawStopBadges(miniMap, segLayer, daySpecs, 22, false);
   } else if (allBounds && allBounds.length) {
     // Overview map: draw all days, each in its own colour, with real geometry
+    const allSpecs = [];
     let globalIdx = 0;
     computedDays.forEach(cd => {
       cd.segments.forEach(seg => {
@@ -4325,23 +4376,16 @@ async function renderMiniMap(container, computedDay, allBounds) {
           L.polyline(seg.polyPts, opts).addTo(segLayer);
         }
       });
-      cd.bounds.forEach(latlon => {
+      cd.bounds.forEach(ll => {
         globalIdx++;
-        const isFirst = globalIdx === 1;
-        const col = isFirst ? '#2d6a4f' : cd.color;
-        const icon = L.divIcon({
-          className: '',
-          iconSize: [20, 20],
-          iconAnchor: [10, 10],
-          html: '<div style="background:' + col +
-            ';color:#fff;border-radius:50%;width:20px;height:20px;display:flex;' +
-            'align-items:center;justify-content:center;font-size:9px;font-weight:700;' +
-            'border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);">' + globalIdx + '</div>'
+        allSpecs.push({
+          num: globalIdx, lat: ll[0], lon: ll[1], label: '',
+          color: globalIdx === 1 ? '#2d6a4f' : cd.color,
         });
-        L.marker(latlon, { icon }).addTo(segLayer);
       });
     });
     miniMap.fitBounds(allBounds, { padding: [20, 20] });
+    drawStopBadges(miniMap, segLayer, allSpecs, 20, false);
   }
 
   // Wait for tiles to load
