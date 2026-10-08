@@ -1778,6 +1778,93 @@ function clearMap() {
   if (leg) { leg.style.display = 'none'; leg.innerHTML = ''; }
 }
 
+/* ============================================================
+   MARKER FAN-OUT
+   When two or more waypoints share the (nearly) same location, their
+   number badges would overlap and the user can't read them. We cluster
+   waypoints that share a location, keep a single "home dot" at the real
+   coordinates, and fan the numbered badges out around that dot with
+   short leader lines so each number is readable.
+   ============================================================ */
+function renderMarkersWithFanOut(specs) {
+  if (!mapReady || !routeLayer || !specs.length) return;
+
+  // Cluster by rounded coordinates (~11 m precision at 5 decimals).
+  // Two stops within that distance count as "same location" for fan-out.
+  const clusters = new Map();
+  specs.forEach(s => {
+    const key = s.lat.toFixed(4) + '|' + s.lon.toFixed(4);
+    if (!clusters.has(key)) clusters.set(key, { lat: s.lat, lon: s.lon, items: [] });
+    clusters.get(key).items.push(s);
+  });
+
+  clusters.forEach(cluster => {
+    const items = cluster.items;
+    if (items.length === 1) {
+      // Single stop at this location — regular marker, no fan-out
+      drawNumberMarker(cluster.lat, cluster.lon, items[0]);
+      return;
+    }
+
+    // Multiple stops here → fan them out on a circle around the home dot.
+    // We draw the badges in screen (pixel) space so they stay evenly spaced
+    // regardless of zoom level, then convert back to lat/lon.
+    const centerLatLng = L.latLng(cluster.lat, cluster.lon);
+    const centerPt = map.latLngToLayerPoint(centerLatLng);
+    const RADIUS_PX = 32;      // distance from home dot to each badge
+    const angleStep = (2 * Math.PI) / items.length;
+    // Start at the top (12 o'clock) and go clockwise
+    const startAngle = -Math.PI / 2;
+
+    // Draw a small "home" dot at the real coordinates so the user still
+    // sees where the stops actually are
+    L.circleMarker(centerLatLng, {
+      radius: 4,
+      color: '#2d6a4f',
+      fillColor: '#2d6a4f',
+      fillOpacity: 1,
+      weight: 2,
+      opacity: 1,
+    }).addTo(routeLayer).bindTooltip(
+      items.map(it => it.num + '. ' + it.label).join('<br>'),
+      { direction: 'top' }
+    );
+
+    items.forEach((item, i) => {
+      const angle = startAngle + i * angleStep;
+      const px = centerPt.x + Math.cos(angle) * RADIUS_PX;
+      const py = centerPt.y + Math.sin(angle) * RADIUS_PX;
+      const badgeLatLng = map.layerPointToLatLng(L.point(px, py));
+
+      // Leader line from home dot to the badge
+      L.polyline([centerLatLng, badgeLatLng], {
+        color: item.color,
+        weight: 1.5,
+        opacity: 0.75,
+        interactive: false,
+      }).addTo(routeLayer);
+
+      drawNumberMarker(badgeLatLng.lat, badgeLatLng.lng, item);
+    });
+  });
+}
+
+function drawNumberMarker(lat, lon, spec) {
+  const icon = L.divIcon({
+    className: '',
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+    html: '<div style="background:' + spec.color +
+      ';color:#fff;border-radius:50%;width:26px;height:26px;' +
+      'display:flex;align-items:center;justify-content:center;' +
+      'font-size:11px;font-weight:700;border:2.5px solid #fff;' +
+      'box-shadow:0 2px 8px rgba(0,0,0,.3);">' + spec.num + '</div>',
+  });
+  L.marker([lat, lon], { icon })
+    .addTo(routeLayer)
+    .bindTooltip('<b>' + spec.num + '. ' + esc(spec.label) + '</b>');
+}
+
 function renderMapLegend() {
   if (!activeTrip) return;
   const leg = $('map-legend');
@@ -2352,6 +2439,7 @@ async function calculateRoute() {
   const allBounds = [];
   let globalMarkerIdx = 0;
   const skippedPlaces = [];
+  const allMarkerSpecs = [];   // collected across all days, fanned out at the end
 
   for (let di = 0; di < activeTrip.days.length; di++) {
     const day = activeTrip.days[di];
@@ -2433,13 +2521,15 @@ async function calculateRoute() {
         globalMarkerIdx++;
         const isFirst = globalMarkerIdx === 1;
         const markerCol = isFirst ? '#2d6a4f' : color;
-        const icon = L.divIcon({
-          className: '',
-          iconSize: [26, 26],
-          iconAnchor: [13, 13],
-          html: '<div style="background:' + markerCol + ';color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.3);">' + globalMarkerIdx + '</div>',
+        // Collect first; we draw them with fan-out after all days are processed
+        // so stops at the same location get separated into a visible row.
+        allMarkerSpecs.push({
+          num: globalMarkerIdx,
+          lat: c.lat,
+          lon: c.lon,
+          color: markerCol,
+          label: c.label,
         });
-        L.marker([c.lat, c.lon], { icon }).addTo(routeLayer).bindTooltip('<b>' + globalMarkerIdx + '. ' + esc(c.label) + '</b>');
         allBounds.push([c.lat, c.lon]);
         dayBounds.push([c.lat, c.lon]);
       });
@@ -2468,6 +2558,7 @@ async function calculateRoute() {
 
   if (mapReady) {
     try { map.fitBounds(allBounds, { padding: [50, 50] }); } catch {}
+    renderMarkersWithFanOut(allMarkerSpecs);
     renderMapLegend();
   }
   renderTable();
